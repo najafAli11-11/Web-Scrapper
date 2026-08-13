@@ -1,0 +1,96 @@
+"""CLI for Milestone 4 extractor verification.
+
+  python -m agents --url <url> [--db PATH] [--mode batch|single]
+      fetch -> (strip if HTML) -> extract, print ExtractionResult + log rows
+
+  python -m agents --file <path> --content-type html|text|pdf|unknown [--url <source>] [--db PATH]
+      extract from a local file of the declared content type
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Optional
+
+from agents.config_loader import load_agent_config
+from agents.extractor import extract_content, mime_to_content_type
+from agents.llm.client import LiteLLMClient
+from fetchers.fetch import fetch_page
+from fetchers.logger import FetchLogger
+from fetchers.types import FetchOutcome
+from pipeline.strip import strip_html
+from schemas.extraction import ContentType
+
+
+def _utf8_stdout() -> None:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+
+def main(argv: Optional[list[str]] = None) -> None:
+    _utf8_stdout()
+    parser = argparse.ArgumentParser(description="Schema-constrained extraction (Spec req. 6-8).")
+    src = parser.add_mutually_exclusive_group(required=True)
+    src.add_argument("--url", help="Fetch a URL first, then extract")
+    src.add_argument("--file", help="Local file to extract from")
+    parser.add_argument("--content-type", choices=["html", "text", "pdf", "unknown"],
+                        help="Declared content type for --file (default: inferred as text)")
+    parser.add_argument("--mode", choices=["batch", "single"], default="batch")
+    parser.add_argument("--db", default=None, help="SQLite log DB path (default: data/logs.db)")
+    args = parser.parse_args(argv)
+
+    with FetchLogger(args.db) as logger:
+        if args.url:
+            fetched = fetch_page(args.url, logger=logger)
+            if fetched.outcome != FetchOutcome.SUCCESS:
+                print(f"fetch outcome={fetched.outcome.value} reason={fetched.reason} -> no extraction")
+                for row in logger.rows_for_url(args.url):
+                    print(json.dumps(row, default=str))
+                return
+            ctype = mime_to_content_type(fetched.content_type)
+            page_title = None
+            if ctype == ContentType.HTML and fetched.html:
+                stripped = strip_html(fetched.html, url=args.url, logger=logger)
+                content: object = stripped.text
+                page_title = stripped.title
+                log_url = args.url
+            elif fetched.raw is not None:
+                content = fetched.raw
+                log_url = args.url
+            else:
+                print("fetch succeeded but no content to extract")
+                return
+        else:
+            path = Path(args.file)
+            ctype = ContentType(args.content_type) if args.content_type else ContentType.TEXT
+            if ctype == ContentType.PDF:
+                content = path.read_bytes()
+            else:
+                content = path.read_text(encoding="utf-8", errors="replace")
+            log_url = args.url or f"file://{path.resolve()}"
+
+        result = extract_content(
+            content,
+            content_type=ctype,
+            source_url=log_url,
+            page_title=page_title,
+            mode=args.mode,
+            client=LiteLLMClient(load_agent_config()),
+            logger=logger,
+        )
+
+    print("--- extraction result ---")
+    print(json.dumps(result.model_dump(mode="json"), indent=2, ensure_ascii=False))
+    print("--- log rows (chronological) ---")
+    with FetchLogger(args.db) as logger:
+        for row in logger.rows_for_url(log_url):
+            print(json.dumps(row, default=str))
+
+
+if __name__ == "__main__":
+    main()
