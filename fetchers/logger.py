@@ -103,6 +103,15 @@ class FetchLogger:
         )
         rows = [{k: r[k] for k in r.keys()} for r in cur.fetchall()]
         return rows[-limit:]
+
+    def recent_events(self, limit: int = 200) -> list[dict]:
+        """Latest events across all URLs — the M9 Logs view feed."""
+        cur = self.conn.execute(
+            "SELECT ts, event_type, url, outcome, reason, details_json"
+            " FROM events ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+        return [{k: r[k] for k in r.keys()} for r in cur.fetchall()]
     def close(self) -> None:
         self.conn.close()
 
