@@ -1,16 +1,79 @@
 {
-  "popup_modal": { "enabled": true, "policy": "dismiss" },
-  "cookie_banner": { "enabled": true, "policy": "dismiss" },
-  "captcha_gate": { "enabled": true, "policy": "flag_and_skip" },
-  "server_errors": { "enabled": true, "policy": "retry_with_backoff", "max_retries": 3 },
-  "slow_responses": { "enabled": true, "policy": "extend_timeout" },
-  "unexpected_redirect": { "enabled": true, "policy": "follow_and_log" },
-  "dom_drift": { "enabled": true, "policy": "reextract" },
-  "blocked_clicks": { "enabled": true, "policy": "retry_with_backoff", "max_retries": 2 },
-  "rate_limit": { "enabled": true, "policy": "backoff_and_throttle" },
-  "data_integrity": { "enabled": true, "policy": "validate_and_flag" },
-  "stale_element": { "enabled": true, "policy": "requery" },
-  "session_expiry": { "enabled": false, "policy": "flag_and_skip" },
-  "random_logout": { "enabled": false, "policy": "flag_and_skip" },
-  "load_more": { "enabled": true, "policy": "paginate" }
+  "popup_modal": {
+    "enabled": true,
+    "detection_method": "detect_overlay_widget",
+    "policy": "dismiss"
+  },
+  "cookie_banner": {
+    "enabled": true,
+    "detection_method": "detect_consent_banner",
+    "policy": "dismiss"
+  },
+  "captcha_gate": {
+    "enabled": true,
+    "detection_method": "detect_challenge_widget",
+    "policy": "terminal_blocked"
+  },
+  "server_errors": {
+    "enabled": true,
+    "detection_method": "http_status_5xx",
+    "policy": "retry_with_backoff",
+    "max_retries": 3
+  },
+  "slow_responses": {
+    "enabled": true,
+    "detection_method": "response_time_exceeded",
+    "policy": "extend_timeout"
+  },
+  "unexpected_redirect": {
+    "enabled": true,
+    "detection_method": "redirect_chain_detected",
+    "policy": "follow_and_log"
+  },
+  "dom_drift": {
+    "enabled": true,
+    "detection_method": "locator_mismatch",
+    "policy": "requery"
+  },
+  "blocked_clicks": {
+    "enabled": true,
+    "detection_method": "click_no_op",
+    "policy": "retry_with_backoff",
+    "max_retries": 2,
+    "scope": "Retry applies only to transient UI flakiness (element not yet clickable, page still rendering). If detection indicates a deliberate access-control denial, escalate to terminal_blocked instead — never retry through a site's deliberate gate."
+  },
+  "rate_limit": {
+    "enabled": true,
+    "detection_method": "http_status_429",
+    "policy": "retry_with_backoff",
+    "max_retries": 3,
+    "scope": "Backoff/retry for this request; sustained per-domain throttling is handled by the deterministic rate limiter (SPEC req. 3), not by this policy."
+  },
+  "data_integrity": {
+    "enabled": true,
+    "detection_method": "schema_validation_failed",
+    "policy": "flag_and_skip"
+  },
+  "stale_element": {
+    "enabled": true,
+    "detection_method": "stale_element_reference",
+    "policy": "requery"
+  },
+  "session_expiry": {
+    "enabled": false,
+    "detection_method": "auth_challenge_detected",
+    "policy": "terminal_blocked",
+    "reason": "Auth-gated content is out of scope for v1 (SPEC.md edge cases). If ever enabled, an auth refusal is a terminal hard block, not a retry."
+  },
+  "random_logout": {
+    "enabled": false,
+    "detection_method": "auth_redirect_detected",
+    "policy": "terminal_blocked",
+    "reason": "Auth-gated content is out of scope for v1 (SPEC.md edge cases). If ever enabled, an auth refusal is a terminal hard block, not a retry."
+  },
+  "load_more": {
+    "enabled": true,
+    "detection_method": "pagination_control_present",
+    "policy": "paginate"
+  }
 }

@@ -140,6 +140,9 @@ A feature/spec is done when:
 - Obstacle handling policy (per Rule 7) lives in a single versioned config
   (obstacle type → enabled, detection method, resolution policy), not
   scattered per-site conditionals.
+- `config/obstacles.json` is validated against `config/obstacles.schema.json`
+  (formal JSON Schema), which is the source of truth for the allowed obstacle
+  keys, detection methods, and resolution policies.
 
 ## How this file should be used
 

@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "config/obstacles.schema.json",
+  "title": "Obstacle Handling Policy Config",
+  "description": "Validates config/obstacles.json per AGENTS.md Rule 7 and its tech convention (obstacle type -> enabled + detection_method + policy). The vocabulary defined here is canonical: add new obstacles/detectors/policies here first, then to obstacles.json. The forbidden CAPTCHA/stealth policies (solve, evasion, proxy rotation) are deliberately absent from the policy enum.",
+  "type": "object",
+  "additionalProperties": false,
+  "propertyNames": {
+    "enum": [
+      "popup_modal",
+      "cookie_banner",
+      "captcha_gate",
+      "server_errors",
+      "slow_responses",
+      "unexpected_redirect",
+      "dom_drift",
+      "blocked_clicks",
+      "rate_limit",
+      "data_integrity",
+      "stale_element",
+      "session_expiry",
+      "random_logout",
+      "load_more"
+    ]
+  },
+  "patternProperties": {
+    "^[a-z_]+$": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "detection_method", "policy"],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this obstacle is actively detected and handled."
+        },
+        "detection_method": {
+          "type": "string",
+          "enum": [
+            "detect_overlay_widget",
+            "detect_consent_banner",
+            "detect_challenge_widget",
+            "http_status_5xx",
+            "response_time_exceeded",
+            "redirect_chain_detected",
+            "locator_mismatch",
+            "click_no_op",
+            "http_status_429",
+            "schema_validation_failed",
+            "stale_element_reference",
+            "auth_challenge_detected",
+            "auth_redirect_detected",
+            "pagination_control_present"
+          ],
+          "description": "Heuristic/DOM-based detection approach (never selector-based, per constitution)."
+        },
+        "policy": {
+          "type": "string",
+          "enum": [
+            "dismiss",
+            "terminal_blocked",
+            "flag_and_skip",
+            "retry_with_backoff",
+            "extend_timeout",
+            "follow_and_log",
+            "requery",
+            "paginate"
+          ],
+          "description": "Canonical resolution policy. terminal_blocked = detect, log with reason, skip, move on (Rule 7: CAPTCHA/auth/hard access-control refusals are never solved or retried). flag_and_skip = flag for review and exclude from corpus (validation/content failures)."
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bounded retry budget for retry policies (Rule 5: bounded retry, then flag)."
+        },
+        "scope": {
+          "type": "string",
+          "description": "Bounding note on when a policy applies (e.g. blocked_clicks retry applies only to transient flakiness)."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why an obstacle is disabled or set to a particular policy."
+        }
+      }
+    }
+  }
+}
