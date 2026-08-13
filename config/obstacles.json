@@ -1,0 +1,16 @@
+{
+  "popup_modal": { "enabled": true, "policy": "dismiss" },
+  "cookie_banner": { "enabled": true, "policy": "dismiss" },
+  "captcha_gate": { "enabled": true, "policy": "flag_and_skip" },
+  "server_errors": { "enabled": true, "policy": "retry_with_backoff", "max_retries": 3 },
+  "slow_responses": { "enabled": true, "policy": "extend_timeout" },
+  "unexpected_redirect": { "enabled": true, "policy": "follow_and_log" },
+  "dom_drift": { "enabled": true, "policy": "reextract" },
+  "blocked_clicks": { "enabled": true, "policy": "retry_with_backoff", "max_retries": 2 },
+  "rate_limit": { "enabled": true, "policy": "backoff_and_throttle" },
+  "data_integrity": { "enabled": true, "policy": "validate_and_flag" },
+  "stale_element": { "enabled": true, "policy": "requery" },
+  "session_expiry": { "enabled": false, "policy": "flag_and_skip" },
+  "random_logout": { "enabled": false, "policy": "flag_and_skip" },
+  "load_more": { "enabled": true, "policy": "paginate" }
+}
