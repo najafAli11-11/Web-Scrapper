@@ -1,0 +1,15 @@
+{
+  "embed": {
+    "model": "BAAI/bge-m3",
+    "fallback_model": "all-MiniLM-L6-v2",
+    "auto_fallback_on_load_failure": true,
+    "batch_size": 32
+  },
+  "chunk": {
+    "max_chunk_chars": 2000
+  },
+  "store": {
+    "chroma_path": "data/chroma",
+    "collection_prefix": "corpus"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pipeline settings: embedding, chunking, vector store",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["embed", "chunk", "store"],
+  "properties": {
+    "embed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "fallback_model", "auto_fallback_on_load_failure", "batch_size"],
+      "properties": {
+        "model": { "type": "string", "minLength": 1 },
+        "fallback_model": { "type": "string", "minLength": 1 },
+        "auto_fallback_on_load_failure": { "type": "boolean" },
+        "batch_size": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "chunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_chunk_chars"],
+      "properties": {
+        "max_chunk_chars": { "type": "integer", "minimum": 100 }
+      }
+    },
+    "store": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chroma_path", "collection_prefix"],
+      "properties": {
+        "chroma_path": { "type": "string", "minLength": 1 },
+        "collection_prefix": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
