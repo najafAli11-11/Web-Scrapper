@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Agent config",
+  "description": "Provider-agnostic LLM settings for the extractor/validator agents. Provider/model/api-key env var are config, not code — any litellm-supported provider is a config change.",
+  "type": "object",
+  "required": ["llm"],
+  "properties": {
+    "llm": {
+      "type": "object",
+      "required": ["provider", "model", "api_key_env", "temperature", "max_tokens", "tool_choice", "parse_retry"],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "litellm provider key, e.g. nvidia_nim, openai, anthropic, groq, ollama, together_ai, bedrock, or openai-compatible"
+        },
+        "model": {
+          "type": "string",
+          "description": "Model name as litellm expects it for the provider (provider-specific)"
+        },
+        "api_key_env": {
+          "type": "string",
+          "description": "Environment variable holding the API key; empty string means no key (local providers like ollama)"
+        },
+        "api_base": {
+          "type": ["string", "null"],
+          "description": "Optional custom base URL for OpenAI-compatible endpoints (e.g. local vLLM/LM Studio); null = provider default"
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tool_choice": {
+          "type": "string",
+          "enum": ["required", "auto", "none"],
+          "description": "tool_choice for the structured-output tool call"
+        },
+        "parse_retry": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3,
+          "description": "Bounded parse-retry budget (default 1): retries when the model returns output that can't be parsed/validated. Format recovery only — not a content repair."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

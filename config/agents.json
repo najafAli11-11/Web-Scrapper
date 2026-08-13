@@ -1,0 +1,12 @@
+{
+  "llm": {
+    "provider": "nvidia_nim",
+    "model": "openai/gpt-oss-20b",
+    "api_key_env": "NVIDIA_NIM_API_KEY",
+    "api_base": null,
+    "temperature": 0.1,
+    "max_tokens": 16384,
+    "tool_choice": "required",
+    "parse_retry": 1
+  }
+}
