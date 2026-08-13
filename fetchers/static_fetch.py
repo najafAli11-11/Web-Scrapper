@@ -189,13 +189,16 @@ def fetch_static(
     if is_html_like(content_type):
         charset = resp.headers.get_content_charset()
         html = _decode_body(body, charset)
+        raw = None
     else:
         html = None
+        raw = body
 
     result = FetchResult(
         url=url,
         outcome=FetchOutcome.SUCCESS,
         html=html,
+        raw=raw,
         status_code=status,
         content_type=content_type,
         final_url=final_url,

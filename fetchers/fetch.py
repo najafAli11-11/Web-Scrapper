@@ -94,7 +94,9 @@ def main(argv: Optional[list[str]] = None) -> None:
         f"status={result.status_code}\n"
         f"final_url={result.final_url}\n"
         f"reason={result.reason}\n"
-        f"html_chars={visible_text_length(result.html) if result.html else 0}"
+        f"content_type={result.content_type}\n"
+        f"html_chars={visible_text_length(result.html) if result.html else 0}\n"
+        f"raw_bytes={len(result.raw) if result.raw else 0}"
     )
     print("--- log rows (chronological) ---")
     with FetchLogger(args.db) as log:

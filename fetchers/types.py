@@ -37,6 +37,7 @@ class FetchResult:
     url: str
     outcome: FetchOutcome
     html: Optional[str] = None
+    raw: Optional[bytes] = None
     status_code: Optional[int] = None
     content_type: Optional[str] = None
     final_url: Optional[str] = None
