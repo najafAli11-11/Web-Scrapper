@@ -137,6 +137,12 @@ A feature/spec is done when:
   files, not hardcoded in agent logic.
 - Every LLM agent's prompt + schema lives in its own file, not inline in
   orchestration code — makes iteration and testing tractable.
+- LLM access is provider-agnostic and config-driven, never hardcoded to a
+  vendor or a raw HTTP client: agents call a thin client abstraction (backed
+  by litellm), and provider/model/API-key-env-var live in
+  `config/agents.json`. Any litellm-supported provider (NVIDIA NIM, OpenAI,
+  Anthropic, Groq, Ollama, OpenAI-compatible `api_base` endpoints, ...) is a
+  config change, not a code change.
 - Obstacle handling policy (per Rule 7) lives in a single versioned config
   (obstacle type → enabled, detection method, resolution policy), not
   scattered per-site conditionals.
