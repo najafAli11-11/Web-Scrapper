@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from typing import Optional
 
 from fetchers.browser_fetch import fetch_browser
@@ -23,6 +24,13 @@ from fetchers.logger import FetchLogger
 from fetchers.rate_limit import RateLimiter
 from fetchers.static_fetch import fetch_static
 from fetchers.types import FetchOutcome, FetchResult
+
+
+def _utf8_stdout() -> None:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 
 def fetch_page(
@@ -68,6 +76,7 @@ def fetch_page(
 
 
 def main(argv: Optional[list[str]] = None) -> None:
+    _utf8_stdout()
     parser = argparse.ArgumentParser(
         description="Fetch a URL (static first, browser fallback) and record the attempt in the event log."
     )
