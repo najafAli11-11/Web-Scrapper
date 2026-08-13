@@ -3,7 +3,7 @@
   "title": "Agent config",
   "description": "Provider-agnostic LLM settings for the extractor/validator agents. Provider/model/api-key env var are config, not code — any litellm-supported provider is a config change.",
   "type": "object",
-  "required": ["llm"],
+  "required": ["llm", "validator"],
   "properties": {
     "llm": {
       "type": "object",
@@ -44,6 +44,25 @@
           "minimum": 0,
           "maximum": 3,
           "description": "Bounded parse-retry budget (default 1): retries when the model returns output that can't be parsed/validated. Format recovery only — not a content repair."
+        }
+      },
+      "additionalProperties": false
+    },
+    "validator": {
+      "type": "object",
+      "required": ["min_confidence", "repair_budget"],
+      "properties": {
+        "min_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Extraction results below this confidence are invalid and go through the retry-then-flag policy (Spec req. 9)"
+        },
+        "repair_budget": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3,
+          "description": "Bounded semantic repair budget (default 1): one re-extraction with validation errors, then flag (Rule 5). Total semantic repair attempts per record is exactly this budget."
         }
       },
       "additionalProperties": false

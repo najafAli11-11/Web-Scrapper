@@ -8,5 +8,9 @@
     "max_tokens": 16384,
     "tool_choice": "required",
     "parse_retry": 1
+  },
+  "validator": {
+    "min_confidence": 0.5,
+    "repair_budget": 1
   }
 }
