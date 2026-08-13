@@ -1,0 +1,17 @@
+Your previous extraction failed validation. The page content is in the
+extraction instructions above — re-extract from the SAME content, fixing
+every problem listed below. Do not re-read the page; the content has not
+changed.
+
+Validation errors:
+{errors}
+
+Rules:
+- Correct every error listed above. Do not skip or dismiss any of them.
+- Preserve source_url, scrape_timestamp, and content_type EXACTLY as given
+  in the provenance above. Do not invent, guess, or reformat them — even if
+  fixing the errors makes the provenance look inconsistent.
+- Do not invent content that is not present in the page. If a section has
+  no real content, extract what is actually there or omit the section.
+- Return the corrected structured output as the tool arguments, nothing
+  else.

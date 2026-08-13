@@ -14,7 +14,10 @@ Non-HTML routing (Spec req. 8):
 Retry policy: the internal parse-retry (bounded, default 1, from config) is
 format recovery only — retrying to obtain a structurally valid response. It
 is distinct from the validator's single content-repair budget (M5); total
-semantic repair attempts per record stay at exactly one.
+semantic repair attempts per record stay at exactly one. When the validator
+re-runs extraction for content repair, it passes `repair_errors` (a
+pre-formatted multi-line string of validation errors) which is appended as a
+user message rendered from prompts/repair.txt.
 
 Events written to the shared SQLite `events` table:
   - extraction_attempt (outcome: extracted | flagged)
@@ -36,6 +39,7 @@ from fetchers.logger import FetchLogger
 from schemas.extraction import ContentType, ExtractionResult
 
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "agents" / "prompts" / "extract.txt"
+REPAIR_PROMPT_PATH = Path(__file__).resolve().parents[1] / "agents" / "prompts" / "repair.txt"
 TOOL_NAME = "extract_meaningful_content"
 TOOL_DESCRIPTION = "Structured representation of the page's meaningful content"
 
@@ -150,6 +154,7 @@ def _build_messages(
     scrape_timestamp: datetime,
     page_title: Optional[str],
     content: str,
+    repair_errors: Optional[str] = None,
 ) -> list[dict]:
     prompt = PROMPT_PATH.read_text(encoding="utf-8").format(
         mode="single" if mode == "single" else "batch",
@@ -159,7 +164,11 @@ def _build_messages(
         page_title=page_title or "",
         content=content,
     )
-    return [{"role": "system", "content": prompt}]
+    messages = [{"role": "system", "content": prompt}]
+    if repair_errors:
+        repair_block = REPAIR_PROMPT_PATH.read_text(encoding="utf-8").format(errors=repair_errors)
+        messages.append({"role": "user", "content": repair_block})
+    return messages
 
 
 def extract_content(
@@ -173,11 +182,16 @@ def extract_content(
     client: Optional[LLMClient] = None,
     agent_cfg: Optional[dict] = None,
     logger: Optional[FetchLogger] = None,
+    repair_errors: Optional[str] = None,
 ) -> ExtractionResult:
     """Extract a structured ExtractionResult from cleaned content.
 
     Never raises on content problems — every failure path resolves to a
     flagged, low-confidence result that carries provenance (Rule 5).
+
+    `repair_errors`, when set, is a pre-formatted multi-line string of
+    validation failures (from the validator's content-repair pass) appended
+    to the prompt via prompts/repair.txt.
     """
     agent_cfg = agent_cfg if agent_cfg is not None else load_agent_config()
     client = client if client is not None else LiteLLMClient(agent_cfg)
@@ -253,6 +267,7 @@ def extract_content(
         scrape_timestamp=scrape_timestamp,
         page_title=page_title,
         content=str(content),
+        repair_errors=repair_errors,
     )
 
     raw: Optional[dict] = None
