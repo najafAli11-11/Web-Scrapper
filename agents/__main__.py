@@ -1,7 +1,8 @@
-"""CLI for Milestone 4 extractor verification.
+"""CLI for Milestone 4/5 extractor + validator verification.
 
-  python -m agents --url <url> [--db PATH] [--mode batch|single]
-      fetch -> (strip if HTML) -> extract, print ExtractionResult + log rows
+  python -m agents --url <url> [--db PATH] [--mode batch|single] [--validate]
+      fetch -> (strip if HTML) -> extract, and optionally validate
+      (with the one-repair-then-flag policy); print result(s) + log rows
 
   python -m agents --file <path> --content-type html|text|pdf|unknown [--url <source>] [--db PATH]
       extract from a local file of the declared content type
@@ -18,6 +19,7 @@ from typing import Optional
 from agents.config_loader import load_agent_config
 from agents.extractor import extract_content, mime_to_content_type
 from agents.llm.client import LiteLLMClient
+from agents.validator import validate_result
 from fetchers.fetch import fetch_page
 from fetchers.logger import FetchLogger
 from fetchers.types import FetchOutcome
@@ -41,6 +43,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     parser.add_argument("--content-type", choices=["html", "text", "pdf", "unknown"],
                         help="Declared content type for --file (default: inferred as text)")
     parser.add_argument("--mode", choices=["batch", "single"], default="batch")
+    parser.add_argument("--validate", action="store_true",
+                        help="Run the validator (one repair, then flag) on the extraction result")
     parser.add_argument("--db", default=None, help="SQLite log DB path (default: data/logs.db)")
     args = parser.parse_args(argv)
 
@@ -74,18 +78,33 @@ def main(argv: Optional[list[str]] = None) -> None:
                 content = path.read_text(encoding="utf-8", errors="replace")
             log_url = args.url or f"file://{path.resolve()}"
 
+        agent_cfg = load_agent_config()
+        client = LiteLLMClient(agent_cfg)
         result = extract_content(
             content,
             content_type=ctype,
             source_url=log_url,
             page_title=page_title,
             mode=args.mode,
-            client=LiteLLMClient(load_agent_config()),
+            client=client,
+            agent_cfg=agent_cfg,
             logger=logger,
         )
 
+        if args.validate:
+            validation = validate_result(
+                result,
+                content=content,
+                mode=args.mode,
+                client=client,
+                agent_cfg=agent_cfg,
+                logger=logger,
+            )
     print("--- extraction result ---")
     print(json.dumps(result.model_dump(mode="json"), indent=2, ensure_ascii=False))
+    if args.validate:
+        print("--- validation result ---")
+        print(json.dumps(validation[0].model_dump(mode="json"), indent=2, ensure_ascii=False))
     print("--- log rows (chronological) ---")
     with FetchLogger(args.db) as logger:
         for row in logger.rows_for_url(log_url):

@@ -70,6 +70,57 @@ def deterministic_errors(
     return errors
 
 
+def _log_attempt(
+    logger: Optional[FetchLogger],
+    url: str,
+    *,
+    outcome: str,
+    mode: str,
+    retry_count: int,
+    num_sections: int,
+    confidence: float,
+) -> None:
+    if logger is None:
+        return
+    logger.log_event(
+        "validation_attempt",
+        url=url,
+        outcome=outcome,
+        details={
+            "mode": mode,
+            "retry_count": retry_count,
+            "num_sections": num_sections,
+            "confidence": confidence,
+        },
+    )
+
+
+def _log_flagged(
+    logger: Optional[FetchLogger],
+    url: str,
+    *,
+    reason: str,
+    flag_reason: str,
+    mode: str,
+    retry_count: int,
+    num_errors: int,
+) -> None:
+    if logger is None:
+        return
+    logger.log_event(
+        "validation_flagged",
+        url=url,
+        outcome="flagged",
+        reason=reason,
+        details={
+            "flag_reason": flag_reason,
+            "mode": mode,
+            "retry_count": retry_count,
+            "num_errors": num_errors,
+        },
+    )
+
+
 def validate_result(
     result: ExtractionResult,
     *,
@@ -100,6 +151,11 @@ def validate_result(
     errors = deterministic_errors(result, min_confidence=min_confidence)
 
     if not errors:
+        _log_attempt(
+            logger, result.source_url, outcome="valid", mode=mode,
+            retry_count=retry_count, num_sections=len(result.sections),
+            confidence=result.confidence,
+        )
         return (
             ValidationResult(
                 source_url=result.source_url,
@@ -113,6 +169,21 @@ def validate_result(
         )
 
     if result.content_type == ContentType.UNKNOWN or retry_count >= repair_budget:
+        flag_reason = (
+            "unsupported_content_type"
+            if result.content_type == ContentType.UNKNOWN
+            else "repair_budget_exhausted"
+        )
+        _log_attempt(
+            logger, result.source_url, outcome="failed", mode=mode,
+            retry_count=retry_count, num_sections=len(result.sections),
+            confidence=result.confidence,
+        )
+        _log_flagged(
+            logger, result.source_url, reason="; ".join(errors),
+            flag_reason=flag_reason, mode=mode, retry_count=retry_count,
+            num_errors=len(errors),
+        )
         return (
             ValidationResult(
                 source_url=result.source_url,
@@ -125,6 +196,11 @@ def validate_result(
             result,
         )
 
+    _log_attempt(
+        logger, result.source_url, outcome="repairing", mode=mode,
+        retry_count=retry_count, num_sections=len(result.sections),
+        confidence=result.confidence,
+    )
     repaired = extract_content(
         content,
         content_type=result.content_type,
