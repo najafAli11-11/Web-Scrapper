@@ -49,7 +49,7 @@ class LocalEmbedder:
             normalize_embeddings=True,
             show_progress_bar=False,
         )
-        return [list(v) for v in vecs]
+        return [[float(x) for x in v] for v in vecs]
 
 
 def _probe_dimension(model, model_name: str) -> int:

@@ -95,8 +95,9 @@ def main(argv: Optional[list[str]] = None) -> None:
             logger=logger,
         )
 
+        result_final = result
         if args.validate:
-            validation = validate_result(
+            validation, result_final = validate_result(
                 result,
                 content=content,
                 mode=args.mode,
@@ -105,7 +106,7 @@ def main(argv: Optional[list[str]] = None) -> None:
                 logger=logger,
             )
     print("--- extraction result ---")
-    print(json.dumps(result.model_dump(mode="json"), indent=2, ensure_ascii=False))
+    print(json.dumps(result_final.model_dump(mode="json"), indent=2, ensure_ascii=False))
     if args.validate:
         print("--- validation result ---")
         print(json.dumps(validation[0].model_dump(mode="json"), indent=2, ensure_ascii=False))

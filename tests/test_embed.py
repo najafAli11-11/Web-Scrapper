@@ -92,3 +92,18 @@ def test_fallback_failure_raises_runtime_error(tmp_path):
 def test_empty_texts_embed_to_empty():
     emb = FakeEmbedder("x")
     assert emb.embed([]) == []
+
+
+def test_local_embedder_converts_numpy_floats_to_python_floats(monkeypatch):
+    import numpy as np
+
+    class FakeModel:
+        def encode(self, texts, **kwargs):
+            return np.array([[np.float32(0.1), np.float32(0.2)], [np.float32(0.3), np.float32(0.4)]])
+
+    import pipeline.embed as embed_mod
+    monkeypatch.setattr("sentence_transformers.SentenceTransformer", lambda name: FakeModel())
+    emb = embed_mod.LocalEmbedder("fake-model")
+    result = emb.embed(["a", "b"])
+    assert np.allclose(result, [[0.1, 0.2], [0.3, 0.4]], atol=1e-6)
+    assert all(type(x) is float for vec in result for x in vec)
