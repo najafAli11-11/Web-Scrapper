@@ -48,6 +48,13 @@ def test_default_config_selects_bge_m3():
     assert cfg["embed"]["fallback_model"] == "all-MiniLM-L6-v2"
 
 
+def test_pipeline_config_chroma_path_env_override(monkeypatch, tmp_path):
+    scratch = str(tmp_path / "env-chroma")
+    monkeypatch.setenv("SCRAPER_CHROMA_PATH", scratch)
+    cfg = load_pipeline_config()
+    assert cfg["store"]["chroma_path"] == scratch
+
+
 def test_load_embedder_builds_configured_model():
     built: list[str] = []
     def factory(name):
