@@ -5,3 +5,4 @@ venv/
 data/
 .pytest_cache/
 .env
+memory.md
