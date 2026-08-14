@@ -20,18 +20,17 @@ from pathlib import Path
 from typing import Optional
 
 from agents.config_loader import load_agent_config
-from agents.extractor import extract_content, mime_to_content_type
 from agents.llm.client import LiteLLMClient
-from agents.validator import validate_result
+from fetchers.config_loader import load_fetch_config, load_obstacle_config
 from fetchers.fetch import fetch_page
 from fetchers.logger import FetchLogger
 from fetchers.types import FetchOutcome
-from pipeline.chunk import chunk_result
 from pipeline.config_loader import load_pipeline_config
 from pipeline.embed import load_embedder
+from pipeline.ingest import format_chunk_report, format_ingest_report, ingest_url, store_result
 from pipeline.store import VectorStore, collection_name_for
 from pipeline.strip import strip_html
-from schemas.extraction import ContentType, ExtractionResult
+from schemas.extraction import ExtractionResult
 
 
 def _utf8_stdout() -> None:
@@ -39,27 +38,6 @@ def _utf8_stdout() -> None:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
-
-
-def _ingest_one(result: ExtractionResult, cfg: dict, embedder, store: VectorStore, logger: FetchLogger):
-    """Chunk, embed, and store one validated result. Returns (stored, error)."""
-    try:
-        chunks = chunk_result(result, max_chunk_chars=cfg["chunk"]["max_chunk_chars"])
-    except ValueError as exc:
-        logger.log_event(
-            event_type="chunk_failed",
-            url=result.source_url,
-            outcome="failed",
-            reason=str(exc),
-            details={"stage": "chunk"},
-        )
-        return 0, str(exc)
-    embeddings = embedder.embed([c.content for c in chunks])
-    collection = collection_name_for(
-        embedder.model_name, embedder.dimension, cfg["store"]["collection_prefix"]
-    )
-    stored = store.store_chunks(chunks, embeddings, collection_name=collection, logger=logger)
-    return stored, None
 
 
 def _run_strip(argv: list[str]) -> None:
@@ -126,17 +104,17 @@ def _run_chunk(argv: list[str]) -> None:
         cfg = load_pipeline_config(Path(args.config) if args.config else None)
         embedder = load_embedder(cfg, logger=logger)
         store = VectorStore(cfg["store"]["chroma_path"], collection_prefix=cfg["store"]["collection_prefix"])
-        stored, err = _ingest_one(result, cfg, embedder, store, logger)
+        stored, err = store_result(result, cfg, embedder, store, logger)
+        collection = collection_name_for(embedder.model_name, embedder.dimension, cfg["store"]["collection_prefix"])
 
-    print(f"stored_chunks={stored} collection={collection_name_for(embedder.model_name, embedder.dimension, cfg['store']['collection_prefix'])}")
-    if err:
-        print(f"chunk_failed reason={err}")
+    report, code = format_chunk_report(stored, collection, err)
+    print(report)
     print("--- log rows ---")
     with FetchLogger(args.db) as logger:
         for row in logger.rows_for_url(result.source_url):
             print(json.dumps(row, default=str))
-    if err:
-        sys.exit(1)
+    if code:
+        sys.exit(code)
 
 
 def _run_ingest(argv: list[str]) -> None:
@@ -151,69 +129,32 @@ def _run_ingest(argv: list[str]) -> None:
     args = parser.parse_args(argv)
 
     with FetchLogger(args.db) as logger:
-        fetched = fetch_page(args.url, logger=logger)
-        if fetched.outcome != FetchOutcome.SUCCESS:
-            print(f"fetch outcome={fetched.outcome.value} reason={fetched.reason} -> no ingestion")
-            for row in logger.rows_for_url(args.url):
-                print(json.dumps(row, default=str))
-            return
-
-        ctype = mime_to_content_type(fetched.content_type)
-        if ctype == ContentType.HTML and fetched.html:
-            stripped = strip_html(fetched.html, url=args.url, logger=logger)
-            content: object = stripped.text
-            page_title = stripped.title
-        elif fetched.raw is not None:
-            content = fetched.raw
-            page_title = None
-        else:
-            print("fetch succeeded but no content to ingest")
-            return
-
-        agent_cfg = load_agent_config()
-        client = LiteLLMClient(agent_cfg)
-        result = extract_content(
-            content,
-            content_type=ctype,
-            source_url=args.url,
-            page_title=page_title,
-            mode=args.mode,
-            client=client,
-            agent_cfg=agent_cfg,
-            logger=logger,
-        )
-        validation, final_result = validate_result(
-            result,
-            content=content,
-            mode=args.mode,
-            client=client,
-            agent_cfg=agent_cfg,
-            logger=logger,
-        )
-        if not validation.is_valid:
-            print(f"validation failed -> not ingested (flagged, see validation_flagged event)")
-            print(json.dumps(validation.model_dump(mode="json"), indent=2, ensure_ascii=False))
-            for row in logger.rows_for_url(args.url):
-                print(json.dumps(row, default=str))
-            return
-
         cfg = load_pipeline_config(Path(args.config) if args.config else None)
         embedder = load_embedder(cfg, logger=logger)
         store = VectorStore(cfg["store"]["chroma_path"], collection_prefix=cfg["store"]["collection_prefix"])
-        stored, err = _ingest_one(final_result, cfg, embedder, store, logger)
-
-    print(
-        f"url={args.url} is_valid=True stored_chunks={stored} "
-        f"sections={len(final_result.sections)} confidence={final_result.confidence}"
-    )
-    if err:
-        print(f"chunk_failed reason={err}")
-    print("--- log rows ---")
-    with FetchLogger(args.db) as logger:
+        agent_cfg = load_agent_config()
+        client = LiteLLMClient(agent_cfg)
+        obstacle_cfg = load_obstacle_config()
+        fetch_cfg = load_fetch_config()
+        outcome = ingest_url(
+            args.url,
+            mode=args.mode,
+            client=client,
+            agent_cfg=agent_cfg,
+            embedder=embedder,
+            store=store,
+            pipeline_cfg=cfg,
+            logger=logger,
+            obstacle_cfg=obstacle_cfg,
+            fetch_cfg=fetch_cfg,
+        )
+        report, code = format_ingest_report(args.url, outcome)
+        print(report)
+        print("--- log rows ---")
         for row in logger.rows_for_url(args.url):
             print(json.dumps(row, default=str))
-    if err:
-        sys.exit(1)
+    if code:
+        sys.exit(code)
 
 
 def main(argv: Optional[list[str]] = None) -> None:
