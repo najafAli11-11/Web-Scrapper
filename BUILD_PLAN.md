@@ -100,6 +100,10 @@ schemas/extraction.py, requirements.txt already in place.
   from storage; querying a new URL triggers the single-shot pipeline and
   returns an answer. Tests SPEC.md acceptance criterion 4.
 - Commit: `orchestrator: hybrid live-query path`
+- **Re-verification note**: any CLI parity/live check that writes to the
+  store (e.g. `pipeline chunk --result <json>`) must target a SCRATCH
+  chroma/events path (a temp dir), never `data/chroma` — a stray test URL
+  pollutes the real corpus (this bit the M7 parity check).
 
 ## Milestone 9 — Minimal local web UI
 - `ui/app.py` — a single lightweight app (Streamlit recommended for
