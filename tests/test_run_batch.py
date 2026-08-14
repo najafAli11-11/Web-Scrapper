@@ -218,3 +218,51 @@ def test_batch_dedupes_duplicate_urls(tmp_path):
     run([STORED, STORED, STORED], queue, logger, ingest=counting)
     assert calls["n"] == 1  # each unique URL processed once per batch
     assert queue.get(STORED)["state"] == "done"
+
+
+def test_crash_mid_processing_resumes_without_reprocessing_done(tmp_path):
+    """Encodes the live kill/resume verification (commit 5):
+
+    run_batch marks a URL processing (attempts -> 1) then the process is
+    hard-killed mid-ingest. The row stays processing/1 — the crash changes
+    nothing. The NEXT invocation opens a fresh UrlQueue, which reverts
+    processing -> pending and preserves attempts (recover_interrupted), then
+    reprocesses exactly the interrupted row. Done rows are never reprocessed,
+    and attempts advance only via real ingest starts: the resume run's own
+    mark_processing raises the interrupted row to 2 (1 killed + 1 resume).
+    """
+    queue, logger = make_context(tmp_path)
+    run([STORED], queue, logger)  # a URL that completed before the crash
+    assert queue.get(STORED)["state"] == "done"
+    assert queue.get(STORED)["attempts"] == 1
+
+    queue.add_urls([TRANSIENT])   # queued later, never started before the crash
+    queue.mark_processing(TRANSIENT)  # batch starts work, then dies hard
+    assert queue.get(TRANSIENT)["state"] == "processing"
+    assert queue.get(TRANSIENT)["attempts"] == 1
+    queue.close()
+
+    # next invocation: opening the queue recovers the stuck row (recover_interrupted)
+    queue2 = UrlQueue(tmp_path / "queue.db")
+    logger2 = FetchLogger(tmp_path / "events.db")
+    assert queue2.get(TRANSIENT)["state"] == "pending"   # processing -> pending
+    assert queue2.get(TRANSIENT)["attempts"] == 1        # kill/recovery incremented nothing
+
+    calls = {"n": 0}
+
+    def storing(url, **kw):
+        calls["n"] += 1
+        return IngestOutcome(status="stored", stored_chunks=2)
+
+    summary = run_batch(
+        [STORED, TRANSIENT],
+        queue=queue2, logger=logger2, agent_cfg={}, client=None, embedder=None,
+        store=None, pipeline_cfg={}, retry_cfg=RETRY, ingest=storing,
+    )
+    assert calls["n"] == 1                          # only the recovered URL is reprocessed
+    assert queue2.get(TRANSIENT)["state"] == "done"
+    assert queue2.get(TRANSIENT)["attempts"] == 2   # 1 killed start + 1 resume start
+    assert queue2.get(STORED)["state"] == "done"
+    assert queue2.get(STORED)["attempts"] == 1      # done before the crash: never reprocessed
+    assert summary["by_state"] == {"done": 1}
+    assert summary["total"] == 1
