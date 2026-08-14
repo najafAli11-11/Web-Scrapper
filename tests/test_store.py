@@ -144,3 +144,32 @@ def test_empty_chunk_list_raises(vs):
 def test_query_on_missing_collection_returns_empty(vs):
     assert vs.query(_vec(0), k=5, collection_name="corpus_none_4") == []
     assert vs.count(collection_name="corpus_none_4") == 0
+
+
+def test_get_returns_all_chunks_for_url_without_cap(vs):
+    """Whole-URL retrieval: every chunk for the URL, no evidence cap.
+
+    Six chunks exceed any query() default k — the no-silent-truncation rule
+    must hold for get() regardless of fixture size.
+    """
+    sections = [f"section {i} content" for i in range(6)]
+    name = _store(vs, _chunks(URL_A, sections))
+    rows = vs.get(collection_name=name, where={"source_url": URL_A})
+    assert len(rows) == 6
+    assert all(r["metadata"]["chunk_index"] == 1 for r in rows)  # 1-based, per-section
+    assert all(r["metadata"]["chunk_total"] == 1 for r in rows)
+    assert all(r["metadata"]["source_url"] == URL_A for r in rows)
+    assert {r["document"] for r in rows} == set(sections)
+    assert rows[0]["metadata"]["scrape_timestamp"] == TS.isoformat()
+
+
+def test_get_no_match_returns_empty(vs):
+    name = _store(vs, _chunks(URL_A, ["one"]))
+    assert vs.get(collection_name=name, where={"source_url": "https://other/x"}) == []
+    assert vs.get(collection_name="corpus_none_4", where={"source_url": URL_A}) == []
+
+
+def test_get_requires_where(vs):
+    name = _store(vs, _chunks(URL_A, ["one"]))
+    with pytest.raises(ValueError, match="where is required"):
+        vs.get(collection_name=name)

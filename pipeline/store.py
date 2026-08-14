@@ -168,6 +168,28 @@ class VectorStore:
             rows.append({"id": doc_id, "document": doc, "metadata": meta, "distance": dist})
         return rows
 
+    def get(self, collection_name: str, *, where: Optional[dict] = None) -> list[dict]:
+        """All chunks matching `where` — NO cap (M6 rule: never silently truncate).
+
+        The reverse of query(): returns {id, document, metadata} for every
+        matching chunk, regardless of how many there are. The live-query path
+        (M8) uses this for whole-URL retrieval when no query text is given.
+
+        `where` is required and guarded with ValueError — retrieving an entire
+        collection is never a legitimate call for this codebase, so it must be
+        a bug, not a silent giant dump. Returns [] for a missing/empty collection.
+        """
+        if where is None:
+            raise ValueError("store.get: where is required (never retrieve a whole collection)")
+        collection = self.get_or_create_collection(collection_name)
+        if collection.count() == 0:
+            return []
+        result = collection.get(where=where, include=["documents", "metadatas"])
+        rows: list[dict] = []
+        for doc_id, doc, meta in zip(result["ids"], result["documents"], result["metadatas"]):
+            rows.append({"id": doc_id, "document": doc, "metadata": meta})
+        return rows
+
     def count(self, *, collection_name: str, where: Optional[dict] = None) -> int:
         collection = self.get_or_create_collection(collection_name)
         if where is None:
