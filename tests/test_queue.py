@@ -50,17 +50,20 @@ def test_mark_processing_unknown_url_raises(tmp_path):
 
 def test_complete_sets_terminal_states(tmp_path):
     q = make_queue(tmp_path)
-    q.add_urls([U, V, "https://example.com/c"])
+    q.add_urls([U, V, "https://example.com/c", "https://example.com/d"])
     urls = q.states()
-    a, b, c = urls[0]["url"], urls[1]["url"], urls[2]["url"]
+    a, b, c, d = [row["url"] for row in urls]
     q.complete(a, "done")
     q.complete(b, "blocked", reason="captcha")
     q.complete(c, "flagged", reason="validation failed")
+    q.complete(d, "failed", reason="no_content: no usable content")
     assert q.get(a)["state"] == "done"
     assert q.get(b)["state"] == "blocked"
     assert q.get(b)["reason"] == "captcha"
     assert q.get(c)["state"] == "flagged"
     assert q.get(c)["reason"] == "validation failed"
+    assert q.get(d)["state"] == "failed"
+    assert q.get(d)["reason"] == "no_content: no usable content"
     with pytest.raises(ValueError):
         q.complete(a, "retrying")
     q.close()

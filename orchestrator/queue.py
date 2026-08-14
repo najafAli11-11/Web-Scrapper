@@ -123,9 +123,11 @@ class UrlQueue:
     # -- outcomes --------------------------------------------------------
 
     def complete(self, url: str, state: str, reason: Optional[str] = None) -> None:
-        """Terminal success/block/flag: done, blocked, or flagged."""
-        if state not in ("done", "blocked", "flagged"):
-            raise ValueError(f"complete() accepts only done/blocked/flagged, got {state!r}")
+        """Terminal state setter: done, blocked, flagged, or failed."""
+        if state not in ("done", "blocked", "flagged", "failed"):
+            raise ValueError(
+                f"complete() accepts only done/blocked/flagged/failed, got {state!r}"
+            )
         if self.get(url) is None:
             raise ValueError(f"complete: unknown url {url!r}")
         with self.conn:
