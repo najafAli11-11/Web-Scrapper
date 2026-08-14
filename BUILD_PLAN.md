@@ -86,6 +86,12 @@ schemas/extraction.py, requirements.txt already in place.
 - **Done when**: given a batch of URLs including one that will fail, a run
   can be killed mid-way and resumed without re-processing completed URLs.
 - Commit: `orchestrator: resumable batch pipeline`
+- **Re-verification note**: a `Stop-Process -Force` on the launcher (`cmd` /
+  `Start-Process` shim) does NOT kill the batch — the `python` worker keeps
+  ingesting as an orphan, so a "kill" may look like it didn't work while the
+  queue keeps moving. Kill the actual worker process (match `CommandLine`
+  via `Get-CimInstance Win32_Process`) to leave a genuine `processing` row
+  behind. This was the cause of the first kill attempt's false negative.
 
 ## Milestone 8 — Single-shot / live-query path
 - `orchestrator/live_query.py` — implements the hybrid behavior (Spec req.
