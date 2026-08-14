@@ -14,7 +14,7 @@ import pytest
 
 from fetchers.logger import FetchLogger
 from pipeline.chunk import chunk_result
-from pipeline.store import VectorStore, chunk_metadata, collection_name_for
+from pipeline.store import VectorStore, chunk_metadata, collection_name_for, corpus_collection, row_provenance
 from schemas.extraction import ContentType, ExtractionResult, Section
 
 TS = datetime(2026, 8, 13, 12, 0, 0, tzinfo=timezone.utc)
@@ -128,6 +128,34 @@ def test_collection_name_encodes_model_and_dim():
     assert collection_name_for("BAAI/bge-m3", 384) != collection_name_for("all-MiniLM-L6-v2", 384)
     with pytest.raises(ValueError):
         collection_name_for("a" * 200, 384)
+
+
+class _FakeEmbedder:
+    model_name = "BAAI/bge-m3"
+    dimension = 1024
+
+
+def test_corpus_collection_derived_from_injected_embedder():
+    cfg = {"store": {"collection_prefix": "corpus"}}
+    assert corpus_collection(_FakeEmbedder(), cfg) == "corpus_BAAI_bge_m3_1024"
+    cfg2 = {"store": {"collection_prefix": "embeds"}}
+    assert corpus_collection(_FakeEmbedder(), cfg2) == "embeds_BAAI_bge_m3_1024"
+
+
+def test_row_provenance_omits_none_keys():
+    meta = {
+        "source_url": "https://example.com/a",
+        "scrape_timestamp": "2026-08-14T12:00:00+00:00",
+    }
+    assert row_provenance(meta) == {
+        "source_url": "https://example.com/a",
+        "scrape_timestamp": "2026-08-14T12:00:00+00:00",
+    }
+    meta["page_title"] = "Page"
+    meta["section_heading"] = None
+    prov = row_provenance(meta)
+    assert prov["page_title"] == "Page"
+    assert "section_heading" not in prov
 
 
 def test_mismatched_chunk_embedding_counts_raise(vs):

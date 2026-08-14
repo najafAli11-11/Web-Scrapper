@@ -43,10 +43,20 @@ def now_utc_iso() -> str:
 
 
 class FetchLogger:
-    def __init__(self, db_path: Optional[Union[str, Path]] = None):
+    def __init__(
+        self,
+        db_path: Optional[Union[str, Path]] = None,
+        *,
+        check_same_thread: bool = True,
+    ):
         self.db_path = Path(db_path) if db_path else DEFAULT_DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path))
+        # check_same_thread=False is required when the logger is cached and
+        # reused across threads (the M9 UI caches it via st.cache_resource,
+        # and Streamlit runs each rerun on a different thread). SQLite is
+        # serialized by file locking + WAL, and Streamlit runs are serialized,
+        # so a single cross-thread connection is safe there.
+        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=check_same_thread)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         with self.conn:

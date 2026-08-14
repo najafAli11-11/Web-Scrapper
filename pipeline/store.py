@@ -54,6 +54,37 @@ def collection_name_for(model_name: str, dimension: int, prefix: str = "corpus")
     return name
 
 
+def row_provenance(meta: dict) -> dict:
+    """Provenance for a corpus chunk row (metadata keys are chroma-safe strings).
+
+    Shared by the M8 live-query path and the M9 chat UI — one mapping, never
+    re-implemented per caller.
+    """
+    prov: dict = {
+        "source_url": meta.get("source_url"),
+        "scrape_timestamp": meta.get("scrape_timestamp"),
+    }
+    for key in ("page_title", "section_heading"):
+        if meta.get(key) is not None:
+            prov[key] = meta[key]
+    return prov
+
+
+def corpus_collection(embedder, pipeline_cfg: dict) -> str:
+    """Collection name for the corpus, derived from the injected embedder.
+
+    Single source of truth shared by the M8 live-query path and the M9 chat
+    UI. The name is ALWAYS derived from the embedder's model_name + dimension
+    (never a hardcoded default) so an embedding-model config change cannot
+    make one path query a different or nonexistent collection.
+    """
+    return collection_name_for(
+        embedder.model_name,
+        embedder.dimension,
+        pipeline_cfg["store"]["collection_prefix"],
+    )
+
+
 def chunk_metadata(chunk: DocumentChunk) -> dict:
     """Chroma-safety: str/int/float/bool only; None fields are omitted."""
     meta: dict = {

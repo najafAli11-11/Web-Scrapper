@@ -33,7 +33,7 @@ from typing import Callable, Optional
 
 from fetchers.logger import FetchLogger
 from pipeline.ingest import IngestOutcome, ingest_url
-from pipeline.store import collection_name_for
+from pipeline.store import corpus_collection, row_provenance
 from schemas.extraction import ExtractionResult, Section
 
 LIVE_OUTCOME_STATUSES = ("blocked", "flagged", "no_content", "fetch_failed")
@@ -58,15 +58,8 @@ class LiveQueryResult:
 
 
 def _row_provenance(meta: dict) -> dict:
-    """Provenance for a corpus chunk row (metadata keys are chroma-safe strings)."""
-    prov: dict = {
-        "source_url": meta.get("source_url"),
-        "scrape_timestamp": meta.get("scrape_timestamp"),
-    }
-    for key in ("page_title", "section_heading"):
-        if meta.get(key) is not None:
-            prov[key] = meta[key]
-    return prov
+    """Provenance for a corpus chunk row (shared helper, see pipeline.store.row_provenance)."""
+    return row_provenance(meta)
 
 
 def _section_provenance(result: ExtractionResult, section: Section) -> dict:
@@ -91,11 +84,7 @@ def _corpus_provenance(url: str, meta: dict) -> dict:
 
 def _collection(embedder, pipeline_cfg: dict) -> str:
     """Collection is ALWAYS derived from the injected embedder's model + dimension."""
-    return collection_name_for(
-        embedder.model_name,
-        embedder.dimension,
-        pipeline_cfg["store"]["collection_prefix"],
-    )
+    return corpus_collection(embedder, pipeline_cfg)
 
 
 def live_query(
