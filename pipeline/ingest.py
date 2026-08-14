@@ -15,6 +15,11 @@ IngestOutcome.status is the queue-transition contract for the orchestrator:
                   fetch succeeded but yielded no usable content — a
                   deterministic per-page condition, retrying wastes budget)
 
+    stored + written=False means "valid extraction, NOT persisted" — only
+    produced by the single-shot live-query path (M8) via write_to_corpus=False.
+    The batch runner must never pass write_to_corpus=False; the queue contract
+    above assumes storage happened.
+
 fetch_failed vs no_content are distinct statuses produced by real, reachable
 code paths: fetch_failed comes from any non-SUCCESS, non-BLOCKED fetch outcome
 (FAILED/EMPTY); no_content comes from a SUCCESS fetch whose result carries
@@ -51,6 +56,7 @@ class IngestOutcome:
     fetch_outcome: str = ""
     result: Optional[ExtractionResult] = None
     validation: Optional[ValidationResult] = None
+    written: bool = False
 
 
 def store_result(
@@ -93,8 +99,17 @@ def ingest_url(
     logger: FetchLogger,
     obstacle_cfg: Optional[dict] = None,
     fetch_cfg: Optional[dict] = None,
+    write_to_corpus: bool = True,
 ) -> IngestOutcome:
-    """Run the full single-URL pipeline and report a queue-mappable outcome."""
+    """Run the full single-URL pipeline and report a queue-mappable outcome.
+
+    write_to_corpus=False runs the same fetch -> strip -> extract -> validate
+    chain but skips chunk/embed/store entirely (no compute, no write-back) —
+    this is the single-shot live-query path (Spec req. 15). The result is a
+    validated ExtractionResult on outcome.result with written=False. Only the
+    live-query path sets this; the batch runner always uses the default True
+    (queue transitions assume storage happened).
+    """
     obstacle_cfg = obstacle_cfg if obstacle_cfg is not None else load_obstacle_config()
     fetch_cfg = fetch_cfg if fetch_cfg is not None else load_fetch_config()
     fetched = fetch_page(url, obstacle_cfg=obstacle_cfg, fetch_cfg=fetch_cfg, logger=logger)
@@ -144,10 +159,18 @@ def ingest_url(
             validation=validation,
         )
 
+    if not write_to_corpus:
+        return IngestOutcome(
+            status="stored",
+            stored_chunks=0,
+            result=final_result,
+            written=False,
+        )
+
     stored, err = store_result(final_result, pipeline_cfg, embedder, store, logger)
     if err:
         return IngestOutcome(status="flagged", reason=err, result=final_result)
-    return IngestOutcome(status="stored", stored_chunks=stored, result=final_result)
+    return IngestOutcome(status="stored", stored_chunks=stored, result=final_result, written=True)
 
 
 def format_ingest_report(url: str, outcome: IngestOutcome) -> tuple[str, int]:

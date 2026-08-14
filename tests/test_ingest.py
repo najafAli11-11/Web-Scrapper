@@ -60,8 +60,10 @@ class FakeEmbedder:
 class FakeStore:
     def __init__(self, stored=2):
         self.stored = stored
+        self.store_calls = 0
 
     def store_chunks(self, chunks, embeddings, *, collection_name, logger=None):
+        self.store_calls += 1
         return self.stored
 
 
@@ -88,6 +90,7 @@ def run(url=U, **kw):
         store=kw.get("store", FakeStore()),
         pipeline_cfg=CFG,
         logger=kw.get("logger"),
+        write_to_corpus=kw.get("write_to_corpus", True),
     )
 
 
@@ -159,6 +162,53 @@ def test_stored_on_success(monkeypatch):
     assert out.status == "stored"
     assert out.stored_chunks == 2
     assert out.result is not None
+
+
+# -- single-shot / write_to_corpus=False (M8 live-query path) -----------------
+
+def test_write_to_corpus_false_skips_storage(monkeypatch):
+    stub_valid_pipeline(monkeypatch)
+    store = FakeStore()
+    out = run(store=store, write_to_corpus=False)
+    assert out.status == "stored"
+    assert out.written is False          # valid extraction, NOT persisted
+    assert out.stored_chunks == 0
+    assert out.result is not None        # answer material available to live-query
+    assert store.store_calls == 0        # chunk/embed/store never touched
+
+
+def test_write_to_corpus_true_writes_by_default(monkeypatch):
+    stub_valid_pipeline(monkeypatch)
+    store = FakeStore()
+    out = run(store=store)
+    assert out.status == "stored"
+    assert out.written is True
+    assert out.stored_chunks == 2
+    assert store.store_calls == 1
+
+
+def test_write_to_corpus_false_still_flags_on_validation_failure(monkeypatch):
+    stub_valid_pipeline(monkeypatch)
+    monkeypatch.setattr(ing, "validate_result", lambda *a, **k: (make_validation(False), make_result()))
+    store = FakeStore()
+    out = run(store=store, write_to_corpus=False)
+    assert out.status == "flagged"
+    assert out.written is False
+    assert store.store_calls == 0
+
+
+def test_write_to_corpus_false_unchanged_for_blocked_and_no_content(monkeypatch):
+    monkeypatch.setattr(ing, "fetch_page", lambda url, **kw: fetch_result(
+        FetchOutcome.BLOCKED, reason="captcha gate detected"
+    ))
+    out = run(write_to_corpus=False)
+    assert out.status == "blocked"
+
+    monkeypatch.setattr(ing, "fetch_page", lambda url, **kw: fetch_result(
+        FetchOutcome.SUCCESS, html=None, raw=None, content_type="text/plain"
+    ))
+    out = run(write_to_corpus=False)
+    assert out.status == "no_content"
 
 
 def test_flagged_when_chunking_fails_but_keeps_result(monkeypatch):
