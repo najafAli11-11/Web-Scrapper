@@ -1,0 +1,6 @@
+{
+  "retry": {
+    "max_attempts": 2,
+    "backoff_seconds": 5
+  }
+}

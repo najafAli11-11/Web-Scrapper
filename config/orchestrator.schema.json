@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Orchestrator settings",
+  "description": "Validates config/orchestrator.json — deterministic retry policy for the resumable batch runner (Rule 6): bounded per-URL attempts and the backoff deadline after which a retrying URL becomes due. Retry policy is versioned config, never hardcoded in orchestration code (AGENTS.md tech conventions).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["retry"],
+  "properties": {
+    "retry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_attempts", "backoff_seconds"],
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Hard per-URL attempt bound. attempts is monotonic (incremented on every processing start, never reset), so a URL reaches the terminal failed state at this bound even across crashes (recover_interrupted never touches attempts)."
+        },
+        "backoff_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Delay after a transient failure before the retrying URL becomes due. run_batch is single-pass and never blocks: rows are reprocessed on the next invocation once now >= added deadline."
+        }
+      }
+    }
+  }
+}
