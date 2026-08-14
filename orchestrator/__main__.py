@@ -1,7 +1,10 @@
-"""CLI for the orchestrator (M7).
+"""CLI for the orchestrator (M7, M8).
 
   python -m orchestrator run <urls.txt> [--db queue.db] [--log events.db]
       [--config orchestrator.json] [--reset] [--mode batch|single]
+
+  python -m orchestrator query <url> [--query "text"] [--log events.db]
+      [--config] [--mode single] [--k N]
 
 Single-pass batch run over the URL frontier:
 - default (no --reset): resume. pending rows are processed; done/blocked/
@@ -11,6 +14,11 @@ Single-pass batch run over the URL frontier:
   of every URL).
 - --db: queue state table (default data/queue.db). --log: shared events DB
   (default data/logs.db) — the same table M6's fetch/validation events use.
+
+Hybrid live query (Spec req. 15): corpus first, single-shot scrape on miss.
+A corpus hit never fetches (no --db — the queue is not involved in querying);
+a miss runs fetch -> strip -> extract -> validate with write_to_corpus=False,
+so a live answer is never persisted to the corpus.
 """
 
 from __future__ import annotations
@@ -26,6 +34,7 @@ from agents.llm.client import LiteLLMClient
 from fetchers.config_loader import load_fetch_config, load_obstacle_config
 from fetchers.logger import FetchLogger
 from orchestrator.config_loader import load_orchestrator_config
+from orchestrator.live_query import live_query
 from orchestrator.queue import UrlQueue
 from orchestrator.run_batch import run_batch
 from pipeline.config_loader import load_pipeline_config
@@ -112,11 +121,72 @@ def _run_import(argv: list[str]) -> None:
             print(json.dumps(e, default=str))
 
 
+def _query_import(argv: list[str]) -> None:
+    parser = argparse.ArgumentParser(
+        prog="python -m orchestrator query",
+        description="Hybrid live query: corpus first, single-shot scrape on miss (Spec req. 15).",
+    )
+    parser.add_argument("url", help="URL to answer about")
+    parser.add_argument("--query", default=None, help="Optional query text for semantic top-k retrieval")
+    parser.add_argument("--log", default=None, help="Shared events DB (default: data/logs.db)")
+    parser.add_argument("--config", default=None, help="Path to config/orchestrator.json")
+    parser.add_argument("--mode", choices=["batch", "single"], default="single")
+    parser.add_argument("--k", type=int, default=5, help="Top-k evidence when --query is given")
+    args = parser.parse_args(argv)
+
+    agent_cfg = load_agent_config()
+    client = LiteLLMClient(agent_cfg)
+    pipeline_cfg = load_pipeline_config()
+    obstacle_cfg = load_obstacle_config()
+    fetch_cfg = load_fetch_config()
+
+    with FetchLogger(args.log) as logger:
+        embedder = load_embedder(pipeline_cfg, logger=logger)
+        store = VectorStore(
+            pipeline_cfg["store"]["chroma_path"],
+            collection_prefix=pipeline_cfg["store"]["collection_prefix"],
+        )
+        result = live_query(
+            args.url,
+            query=args.query,
+            logger=logger,
+            agent_cfg=agent_cfg,
+            client=client,
+            embedder=embedder,
+            store=store,
+            pipeline_cfg=pipeline_cfg,
+            mode=args.mode,
+            k=args.k,
+            obstacle_cfg=obstacle_cfg,
+            fetch_cfg=fetch_cfg,
+        )
+
+    print(f"url={result.url}")
+    print(f"found_in_corpus={result.found_in_corpus}")
+    print(f"source={result.source_used} status={result.status}")
+    if result.reason:
+        print(f"reason={result.reason}")
+    prov = result.provenance
+    print(
+        "provenance: source_url="
+        f"{prov.get('source_url')} scrape_timestamp={prov.get('scrape_timestamp')} "
+        f"page_title={prov.get('page_title')}"
+    )
+    print(f"evidence={len(result.evidence)}")
+    shown = result.evidence if not args.query else result.evidence[: args.k]
+    for i, ev in enumerate(shown, start=1):
+        heading = ev.provenance.get("section_heading")
+        text = " ".join(ev.text.split())[:200]
+        print(f"  [{i}] {f'({heading}) ' if heading else ''}{text}")
+
+
 def main(argv: Optional[list[str]] = None) -> None:
     _utf8_stdout()
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "run":
         _run_import(args[1:])
+    elif args and args[0] == "query":
+        _query_import(args[1:])
     else:
         print(__doc__)
         sys.exit(1)
