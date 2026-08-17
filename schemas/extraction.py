@@ -7,9 +7,10 @@ This schema is intentionally content-type-agnostic: it describes
 "meaningful content of a page," not a product/article/forum-specific shape.
 """
 
+import json
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -53,6 +54,18 @@ class ExtractionResult(BaseModel):
         default_factory=list,
         description="Structural units surfaced during extraction, used for semantic chunking (Spec req. 10)",
     )
+
+    @field_validator("sections", mode="before")
+    @classmethod
+    def _coerce_sections(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return v
     confidence: float = Field(
         ..., ge=0.0, le=1.0, description="Extraction confidence, drives validator retry/flag logic"
     )

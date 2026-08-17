@@ -8,14 +8,15 @@ triggers the answer_generation_failed fallback path (agents/answer.py).
 
 from __future__ import annotations
 
-from typing import Optional
+import json
+from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Citation(BaseModel):
     source_url: str = Field(min_length=1)
-    scrape_timestamp: str = Field(min_length=1)
+    scrape_timestamp: str = ""
     page_title: Optional[str] = None
     section_heading: Optional[str] = None
     quote: str = Field(min_length=1)
@@ -24,3 +25,15 @@ class Citation(BaseModel):
 class Answer(BaseModel):
     answer: str = Field(min_length=1)
     citations: list[Citation] = Field(min_length=1)
+
+    @field_validator("citations", mode="before")
+    @classmethod
+    def _coerce_citations(cls, v: Any) -> list:
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return parsed
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return v
