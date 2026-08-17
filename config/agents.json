@@ -1,7 +1,7 @@
 {
   "llm": {
     "provider": "nvidia_nim",
-    "model": "openai/gpt-oss-20b",
+    "model": "meta/llama-3.1-70b-instruct",
     "api_key_env": "NVIDIA_NIM_API_KEY",
     "api_base": null,
     "temperature": 0.1,
