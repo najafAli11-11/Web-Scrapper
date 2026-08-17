@@ -90,9 +90,10 @@ def test_generate_answer_returns_answer_with_verbatim_quote(tmp_path):
         assert "citations" in props
         assert "required" in call["tool_schema"] and "citations" in call["tool_schema"]["required"]
         assert "source_url" in call["tool_schema"]["$defs"]["Citation"]["properties"]
-        # Evidence text with provenance reaches the prompt.
-        assert src in call["messages"][0]["content"]
-        assert "source_url=https://example.com/a" in call["messages"][0]["content"]
+        # Evidence text with provenance reaches the prompt (now in user message).
+        user_msg = call["messages"][1]["content"]
+        assert src in user_msg
+        assert "source_url=https://example.com/a" in user_msg
 
         assert failure_events(logger) == []
     finally:

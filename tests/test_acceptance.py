@@ -67,13 +67,13 @@ class ScriptedClient:
         self.calls: dict[str, int] = {}
 
     def complete_structured(self, *, messages, tool_name, tool_schema, temperature, max_tokens):
-        system = messages[0]["content"]
+        full_text = "\n".join(m["content"] for m in messages)
         url = ""
-        for line in system.splitlines():
+        for line in full_text.splitlines():
             if line.strip().startswith("source_url:"):
                 url = line.split(":", 1)[1].strip()
         self.calls[url] = self.calls.get(url, 0) + 1
-        if "hello world" in system.lower():
+        if "hello world" in full_text.lower():
             return {
                 "source_url": url,
                 "scrape_timestamp": TS.isoformat(),

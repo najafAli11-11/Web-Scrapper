@@ -219,7 +219,7 @@ def test_pdf_routes_through_text_extraction(tmp_path, monkeypatch):
             logger=logger,
         )
         assert result.content_type == ContentType.PDF
-        assert client.calls[0]["messages"][0]["content"].count(extracted_text) >= 1
+        assert client.calls[0]["messages"][1]["content"].count(extracted_text) >= 1
         assert result.confidence == 0.95
 
 
