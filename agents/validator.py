@@ -26,6 +26,7 @@ from typing import Optional, Union
 from agents.config_loader import load_agent_config
 from agents.extractor import extract_content
 from agents.llm.client import LLMClient
+from fetchers.config_loader import is_enabled, policy_for
 from fetchers.logger import FetchLogger
 from schemas.extraction import ContentType, ExtractionResult, ValidationResult
 
@@ -121,6 +122,37 @@ def _log_flagged(
     )
 
 
+def _log_obstacle_event(
+    logger: Optional[FetchLogger],
+    url: str,
+    obstacle_cfg: dict,
+    obstacle_name: str,
+    *,
+    errors: list[str],
+    flag_reason: str,
+    mode: str,
+    retry_count: int,
+) -> None:
+    """Log an obstacle_detected event for a data_integrity failure (Rule 7)."""
+    if logger is None:
+        return
+    logger.log_event(
+        "obstacle_detected",
+        url=url,
+        outcome="flagged",
+        reason=f"data_integrity: {'; '.join(errors)}",
+        details={
+            "obstacle": obstacle_name,
+            "detection_method": "schema_validation_failed",
+            "policy": policy_for(obstacle_cfg, obstacle_name),
+            "flag_reason": flag_reason,
+            "mode": mode,
+            "retry_count": retry_count,
+            "num_errors": len(errors),
+        },
+    )
+
+
 def validate_result(
     result: ExtractionResult,
     *,
@@ -130,6 +162,7 @@ def validate_result(
     agent_cfg: Optional[dict] = None,
     logger: Optional[FetchLogger] = None,
     retry_count: int = 0,
+    obstacle_cfg: Optional[dict] = None,
 ) -> tuple[ValidationResult, ExtractionResult]:
     """Validate an ExtractionResult, repairing once then flagging (Spec req. 9).
 
@@ -142,6 +175,11 @@ def validate_result(
     `agent_cfg=None` loads the versioned config (the codebase convention
     used by extract_content); hand-built cfgs may omit the "validator" key
     and fall back to DEFAULT_MIN_CONFIDENCE / DEFAULT_REPAIR_BUDGET.
+
+    `obstacle_cfg` enables obstacle-aware logging: when `data_integrity` is
+    enabled in the obstacle config, validation failures log an
+    `obstacle_detected` event (AGENTS.md Rule 7, obstacle config is the
+    source of truth for obstacle policy).
     """
     agent_cfg = agent_cfg if agent_cfg is not None else load_agent_config()
     validator_cfg = agent_cfg.get("validator", {}) or {}
@@ -184,6 +222,12 @@ def validate_result(
             flag_reason=flag_reason, mode=mode, retry_count=retry_count,
             num_errors=len(errors),
         )
+        if obstacle_cfg is not None and is_enabled(obstacle_cfg, "data_integrity"):
+            _log_obstacle_event(
+                logger, result.source_url, obstacle_cfg, "data_integrity",
+                errors=errors, flag_reason=flag_reason, mode=mode,
+                retry_count=retry_count,
+            )
         return (
             ValidationResult(
                 source_url=result.source_url,
@@ -221,4 +265,5 @@ def validate_result(
         agent_cfg=agent_cfg,
         logger=logger,
         retry_count=retry_count + 1,
+        obstacle_cfg=obstacle_cfg,
     )

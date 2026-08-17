@@ -255,6 +255,17 @@ def _safe_click(page, locator, obstacle_cfg: dict, fetch_cfg: dict, logger: Fetc
                 raise _ClickNoOp(f"{kind}: element not actionable after {max_retries + 1} attempts (dom_drift/requery)")
             time.sleep(_backoff_seconds(attempt, base_backoff, None))
             continue
+        except PlaywrightError as exc:
+            msg = (exc.message or "").lower()
+            _log_obstacle(
+                logger, obstacle_cfg, url, "stale_element",
+                f"stale element on {kind}: {exc.message}",
+                {"error": exc.message, "attempt": attempt + 1},
+            )
+            if attempt >= max_retries:
+                raise _ClickNoOp(f"{kind}: element not actionable after {max_retries + 1} attempts (stale_element)")
+            time.sleep(_backoff_seconds(attempt, base_backoff, None))
+            continue
 
         page.wait_for_timeout(700)
 

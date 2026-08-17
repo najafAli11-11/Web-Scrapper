@@ -303,3 +303,74 @@ def test_real_agent_config_validates_with_validator_key():
     cfg = load_agent_config()
     assert cfg["validator"]["min_confidence"] == 0.5
     assert cfg["validator"]["repair_budget"] == 1
+
+
+# --- data_integrity obstacle event logging --------------------------------
+
+def test_data_integrity_obstacle_logged_on_flag(tmp_path):
+    """When data_integrity is enabled in obstacle_cfg, a validation failure
+    logs an obstacle_detected event (Rule 7: obstacle config is source of
+    truth for obstacle policy)."""
+    client = StubClient([_broken_response(), _broken_response()])
+    obstacle_cfg = {
+        "data_integrity": {"enabled": True, "detection_method": "schema_validation_failed", "policy": "flag_and_skip"},
+    }
+    with FetchLogger(tmp_path / "logs.db") as logger:
+        vr, _ = validate_result(
+            _result(sections=[], confidence=0.0),
+            content="body",
+            client=client,
+            agent_cfg=_cfg(repair_budget=1),
+            logger=logger,
+            obstacle_cfg=obstacle_cfg,
+        )
+        rows = logger.rows_for_url(URL)
+
+    assert not vr.is_valid
+    obstacle_events = [r for r in rows if r["event_type"] == "obstacle_detected"]
+    assert len(obstacle_events) == 1
+    details = __import__("json").loads(obstacle_events[0]["details_json"])
+    assert details["obstacle"] == "data_integrity"
+    assert details["detection_method"] == "schema_validation_failed"
+    assert details["policy"] == "flag_and_skip"
+
+
+def test_data_integrity_obstacle_not_logged_when_disabled(tmp_path):
+    """When data_integrity is disabled in obstacle_cfg, no obstacle_detected
+    event is logged on validation failure."""
+    client = StubClient([_broken_response(), _broken_response()])
+    obstacle_cfg = {
+        "data_integrity": {"enabled": False, "detection_method": "schema_validation_failed", "policy": "flag_and_skip"},
+    }
+    with FetchLogger(tmp_path / "logs.db") as logger:
+        vr, _ = validate_result(
+            _result(sections=[], confidence=0.0),
+            content="body",
+            client=client,
+            agent_cfg=_cfg(repair_budget=1),
+            logger=logger,
+            obstacle_cfg=obstacle_cfg,
+        )
+        rows = logger.rows_for_url(URL)
+
+    assert not vr.is_valid
+    obstacle_events = [r for r in rows if r["event_type"] == "obstacle_detected"]
+    assert len(obstacle_events) == 0
+
+
+def test_data_integrity_backward_compatible_no_obstacle_cfg(tmp_path):
+    """validate_result works without obstacle_cfg (backward compatibility)."""
+    client = StubClient([_broken_response(), _broken_response()])
+    with FetchLogger(tmp_path / "logs.db") as logger:
+        vr, _ = validate_result(
+            _result(sections=[], confidence=0.0),
+            content="body",
+            client=client,
+            agent_cfg=_cfg(repair_budget=1),
+            logger=logger,
+        )
+        rows = logger.rows_for_url(URL)
+
+    assert not vr.is_valid
+    obstacle_events = [r for r in rows if r["event_type"] == "obstacle_detected"]
+    assert len(obstacle_events) == 0

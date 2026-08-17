@@ -151,6 +151,7 @@ def ingest_url(
         client=client,
         agent_cfg=agent_cfg,
         logger=logger,
+        obstacle_cfg=obstacle_cfg,
     )
     if not validation.is_valid:
         return IngestOutcome(
