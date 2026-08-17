@@ -12,11 +12,31 @@ with an automatic strict-JSON fallback for providers/models that don't.
 from __future__ import annotations
 
 import json
+import re
 from typing import Optional, Protocol, Sequence, Union
 
 from agents.llm.env import get_env
 
 Messages = Sequence[dict]
+
+
+def _extract_json_from_text(text: str) -> Optional[dict]:
+    """Extract a JSON object from text that may contain markdown formatting.
+
+    Handles: raw JSON, ```json fenced blocks, and ``` fenced blocks.
+    """
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    for pattern in (r"```json\s*\n(.*?)\n\s*```", r"```\s*\n(.*?)\n\s*```"):
+        for match in re.finditer(pattern, text, re.DOTALL):
+            try:
+                return json.loads(match.group(1).strip())
+            except (json.JSONDecodeError, ValueError):
+                continue
+    return None
 
 
 class LLMClient(Protocol):
@@ -36,6 +56,7 @@ class LLMClient(Protocol):
 class LiteLLMClient:
     def __init__(self, agent_cfg: dict):
         self.cfg = agent_cfg["llm"]
+        self.last_raw_text: Optional[str] = None
 
     def _model(self) -> str:
         provider = self.cfg["provider"]
@@ -93,19 +114,23 @@ class LiteLLMClient:
                 tool_choice=self.cfg.get("tool_choice", "required"),
             )
         except Exception:
-            # Provider/model doesn't support tool-calling -> strict-JSON mode.
-            return self._json_mode(messages, tool_schema, temperature, max_tokens, **kwargs)
+            return self._json_mode(messages, tool_schema, temperature, max_tokens)
 
         try:
             message = response.choices[0].message
+            self.last_raw_text = message.content
             for call in message.tool_calls or []:
                 if call.function and call.function.arguments:
                     return json.loads(call.function.arguments)
+            if message.content:
+                parsed = _extract_json_from_text(message.content)
+                if parsed is not None:
+                    return parsed
         except Exception:
-            return None
-        return None
+            pass
+        return self._json_mode(messages, tool_schema, temperature, max_tokens)
 
-    def _json_mode(self, messages, tool_schema, temperature, max_tokens, **kwargs) -> Optional[dict]:
+    def _json_mode(self, messages, tool_schema, temperature, max_tokens) -> Optional[dict]:
         import litellm
 
         instruction = {
@@ -118,12 +143,14 @@ class LiteLLMClient:
         }
         try:
             response = litellm.completion(
-                **kwargs,
+                model=self._model(),
+                api_key=self._api_key(),
                 messages=list(messages) + [instruction],
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
             text = response.choices[0].message.content
+            self.last_raw_text = text
             return json.loads(text) if text else None
         except Exception:
             return None
