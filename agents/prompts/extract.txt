@@ -34,6 +34,6 @@ Provenance:
   source_url: {source_url}
   scrape_timestamp: {scrape_timestamp}
   page_title: {page_title}
-
+---
 Cleaned page content:
 {content}

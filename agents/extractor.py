@@ -164,7 +164,14 @@ def _build_messages(
         page_title=page_title or "",
         content=content,
     )
-    messages = [{"role": "system", "content": prompt}]
+    if "---" in prompt:
+        sys_part, user_part = prompt.split("---", 1)
+        messages = [
+            {"role": "system", "content": sys_part.strip()},
+            {"role": "user", "content": user_part.strip()},
+        ]
+    else:
+        messages = [{"role": "system", "content": prompt}]
     if repair_errors:
         repair_block = REPAIR_PROMPT_PATH.read_text(encoding="utf-8").format(errors=repair_errors)
         messages.append({"role": "user", "content": repair_block})

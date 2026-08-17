@@ -16,17 +16,37 @@ pattern, not an oversight.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
 
 from pydantic import ValidationError
 
-from agents.llm.client import LLMClient
+from agents.llm.client import LLMClient, LiteLLMClient
 from fetchers.logger import FetchLogger
 from schemas.answer import Answer
 
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "agents" / "prompts" / "answer.txt"
 TOOL_NAME = "answer_question"
+
+
+def _unwrap_answer(answer: Answer) -> Answer:
+    """Unwrap JSON-inside-JSON: when the model returns {\"answer\": ..., \"citations\": ...}
+    as the answer string instead of as the top-level structure."""
+    text = answer.answer.strip()
+    if not text.startswith("{"):
+        return answer
+    try:
+        import json
+        inner = json.loads(text)
+        if isinstance(inner, dict) and "answer" in inner:
+            citations = answer.citations
+            if not citations and "citations" in inner:
+                citations = inner["citations"]
+            return Answer(answer=inner["answer"], citations=citations)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        pass
+    return answer
 
 
 def _render_evidence(evidence: list[dict]) -> str:
@@ -40,6 +60,49 @@ def _render_evidence(evidence: list[dict]) -> str:
             label += f" section_heading={heading}"
         blocks.append(f"{label}\n{ev.get('text', '')}")
     return "\n\n".join(blocks)
+
+
+def _fallback_from_markdown(text: str, evidence: list[dict]) -> Optional[Answer]:
+    """Extract an Answer from markdown prose when the model ignores the schema.
+
+    Handles the common pattern where the model returns:
+        **Answer**
+        <answer text>
+
+        **Citations**
+        - source_url: ...
+          quote: ...
+    """
+    answer_match = re.search(
+        r"\*\*Answer\*\*\s*\n(.*?)(?=\n\*\*|\Z)", text, re.DOTALL
+    )
+    answer_text = answer_match.group(1).strip() if answer_match else text.strip()
+    if not answer_text:
+        return None
+
+    citations = []
+    for ev in evidence:
+        prov = ev.get("provenance") or {}
+        src = prov.get("source_url", "")
+        quote = ev.get("text", "")
+        if not src or not quote:
+            continue
+        citations.append({
+            "source_url": src,
+            "scrape_timestamp": prov.get("scrape_timestamp", ""),
+            "page_title": prov.get("page_title"),
+            "section_heading": prov.get("section_heading"),
+            "quote": quote[:300],
+        })
+        if len(citations) >= 3:
+            break
+
+    if not citations:
+        return None
+    try:
+        return Answer(answer=answer_text, citations=citations)
+    except ValidationError:
+        return None
 
 
 def generate_answer(
@@ -62,7 +125,14 @@ def generate_answer(
         question=question,
         evidence=_render_evidence(evidence),
     )
-    messages = [{"role": "system", "content": prompt}]
+    if "---" in prompt:
+        sys_part, user_part = prompt.split("---", 1)
+        messages = [
+            {"role": "system", "content": sys_part.strip()},
+            {"role": "user", "content": user_part.strip()},
+        ]
+    else:
+        messages = [{"role": "system", "content": prompt}]
 
     raw: Optional[dict] = None
     error: Optional[str] = None
@@ -79,11 +149,16 @@ def generate_answer(
 
     if raw is not None:
         try:
-            return Answer.model_validate(raw)
+            return _unwrap_answer(Answer.model_validate(raw))
         except ValidationError as exc:
             error = f"schema validation failed: {exc}"
     else:
         error = error or "model returned no parseable structured output"
+
+    if isinstance(client, LiteLLMClient) and client.last_raw_text:
+        fb = _fallback_from_markdown(client.last_raw_text, evidence)
+        if fb is not None:
+            return fb
 
     if logger is not None:
         logger.log_event(
