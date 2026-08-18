@@ -471,6 +471,15 @@ def _settle(page, fetch_cfg: dict, logger=None, url: str = "") -> None:
             )
     page.wait_for_timeout(int(float(fetch_cfg["browser_settle_seconds"]) * 1000))
 
+    # Scroll down to trigger lazy loading on SPA pages
+    try:
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        page.wait_for_timeout(1500)
+        page.evaluate("window.scrollTo(0, 0)")
+        page.wait_for_timeout(500)
+    except PlaywrightError:
+        pass
+
 
 def fetch_browser(
     url: str,

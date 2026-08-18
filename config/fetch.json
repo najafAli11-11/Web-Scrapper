@@ -5,7 +5,7 @@
   "empty_content_threshold_chars": 100,
   "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
   "max_redirects": 10,
-  "browser_settle_seconds": 2,
+  "browser_settle_seconds": 5,
   "pagination_max_clicks": 5,
   "backoff_base_seconds": 1.0
 }
