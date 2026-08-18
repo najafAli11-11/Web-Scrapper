@@ -1,12 +1,12 @@
 {
   "llm": {
     "provider": "nvidia_nim",
-    "model": "meta/llama-4-maverick-17b-128e-instruct",
+    "model": "nvidia/nemotron-3.5-lightning-30b-a3b",
     "api_key_env": "NVIDIA_NIM_API_KEY",
     "api_base": null,
     "temperature": 0.1,
     "max_tokens": 16384,
-    "timeout_seconds": 30,
+    "timeout_seconds": 90,
     "tool_choice": "required",
     "parse_retry": 1
   },
