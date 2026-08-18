@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -133,7 +134,10 @@ def _render_chat() -> None:
     url = col1.text_input("URL", key="chat_url")
     url_query = col2.text_input("Optional query text", key="chat_url_query")
     if st.button("Ask about URL", key="ask_url") and url.strip():
-        _url_query(url.strip(), url_query.strip() or None)
+        _url_query_start(url.strip(), url_query.strip() or None)
+        st.rerun()
+
+    _url_query_poll()
 
 
 def _corpus_qa(question: str) -> None:
@@ -175,39 +179,142 @@ def _corpus_qa(question: str) -> None:
             st.write(ev["text"])
 
 
-def _url_query(url: str, query: Optional[str]) -> None:
-    with st.spinner("Live query..."):
-        result = live_query(
-            url,
-            query=query,
-            logger=_logger(),
-            agent_cfg=_agent_config(),
-            client=_llm_client(),
-            embedder=_embedder(),
-            store=_store(),
-            pipeline_cfg=_pipeline_config(),
-            mode="single",
-            k=K,
-        )
-    if result.status in ("ok", "single_shot_ok"):
-        st.success(f"**{result.status}** — {result.source_used} · evidence: {len(result.evidence)}")
+def _render_live_event(event: dict) -> None:
+    """Render one pipeline event as a compact one-line indicator."""
+    outcome = event.get("outcome") or ""
+    reason = event.get("reason") or ""
+    ev_type = event.get("event_type") or ""
+
+    if outcome in ("success", "ok", "corpus_hit", "kept_static", "completed",
+                    "single_shot_ok", "corpus_miss_single_shot_ok", "dismissed",
+                    "rescued", "stale_element_recovered", "title_ok"):
+        icon = "\u2705"
+    elif outcome in ("error", "failed", "fetch_failed", "blocked", "flagged",
+                      "no_content", "parse_exhausted", "corpus_error",
+                      "answer_generation_failed", "navigation_error",
+                      "browser_error", "chunk_ingest_failed", "chunk_failed",
+                      "corpus_error"):
+        icon = "\u274c"
+    elif outcome in ("obstacle_detected", "encoding_fallback", "rate_limit_wait",
+                      "strip_parse_warning", "detection_failure", "timeout",
+                      "answer_fallback_rescued", "answer_unwrap_rescue",
+                      "networkidle_timeout", "load_more_stall"):
+        icon = "\u26a0\ufe0f"
+    elif outcome in ("tool_use", "json_from_content", "json_mode",
+                      "retrying", "store_start", "fetch_done",
+                      "validate_done", "stripping", "extracting"):
+        icon = "\u23f3"
     else:
-        st.error(f"**{result.status}**" + (f" — {result.reason}" if result.reason else ""))
+        icon = "\u25cf"
+
+    parts = [f"{icon} **{ev_type}**"]
+    if outcome:
+        parts.append(outcome)
+    if reason:
+        parts.append(reason)
+    st.markdown(" | ".join(parts))
+    if event.get("details_json"):
+        try:
+            details = json.loads(event["details_json"])
+            with st.expander("details", expanded=False):
+                st.code(json.dumps(details, indent=2))
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+
+def _url_query_start(url: str, query: Optional[str]) -> None:
+    """Start a live query in a background thread."""
+    state: dict = {"result": None, "error": None, "done": False}
+
+    def _run():
+        try:
+            state["result"] = live_query(
+                url,
+                query=query,
+                logger=_logger(),
+                agent_cfg=_agent_config(),
+                client=_llm_client(),
+                embedder=_embedder(),
+                store=_store(),
+                pipeline_cfg=_pipeline_config(),
+                mode="single",
+                k=K,
+            )
+        except Exception as exc:
+            state["error"] = exc
+        finally:
+            state["done"] = True
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    st.session_state["lq_thread"] = thread
+    st.session_state["lq_state"] = state
+    st.session_state["lq_url"] = url
+    st.session_state["lq_query"] = query
+    st.session_state["lq_active"] = True
+
+
+def _url_query_poll() -> None:
+    """Poll the events DB and render live logs while the pipeline runs."""
+    if not st.session_state.get("lq_active"):
+        return
+
+    thread = st.session_state["lq_thread"]
+    state = st.session_state["lq_state"]
+    url = st.session_state["lq_url"]
+
+    st.markdown(f"**Live query:** `{url}`")
+
+    view = EventLogView(LOGS_DB)
+    events = view.recent(limit=50, url_filter=url)
+    if events:
+        for event in reversed(events):
+            _render_live_event(event)
+
+    if state["done"]:
+        st.session_state["lq_active"] = False
+        thread.join(timeout=5)
+
+        result = state["result"]
+        error = state["error"]
+
+        st.divider()
+        if error:
+            st.error(f"Pipeline failed: {error}")
+        elif result is None:
+            st.error("Pipeline returned no result.")
+        else:
+            _render_url_result(result, url)
+    else:
+        st.info("\u23f3 Pipeline running...")
+        time.sleep(1.5)
+        st.rerun()
+
+
+def _render_url_result(result, url: str) -> None:
+    """Render the final LiveQueryResult in the Chat tab."""
+    if result.status in ("ok", "single_shot_ok"):
+        st.success(f"**{result.status}** \u2014 {result.source_used} \u00b7 evidence: {len(result.evidence)}")
+    else:
+        st.error(f"**{result.status}**" + (f" \u2014 {result.reason}" if result.reason else ""))
+
     prov = result.provenance
     st.write(
-        f"**source_url:** {prov.get('source_url')} · "
-        f"**scrape_timestamp:** {prov.get('scrape_timestamp')} · "
+        f"**source_url:** {prov.get('source_url')} \u00b7 "
+        f"**scrape_timestamp:** {prov.get('scrape_timestamp')} \u00b7 "
         f"**page_title:** {prov.get('page_title')}"
     )
+
+    query = st.session_state.get("lq_query")
     if result.evidence and query:
         evidence = [{"text": ev.text, "provenance": ev.provenance} for ev in result.evidence]
         with st.spinner("Synthesizing the answer..."):
             answer = generate_answer(
-                query, evidence, client=_llm_client(), agent_cfg=_agent_config(), logger=_logger(),
-                url=url,
+                query, evidence, client=_llm_client(), agent_cfg=_agent_config(),
+                logger=_logger(), url=url,
             )
         if answer is None:
-            st.error("Answer synthesis failed — showing raw evidence below.")
+            st.error("Answer synthesis failed \u2014 showing raw evidence below.")
         else:
             st.markdown(answer.answer)
             for citation in answer.citations:
@@ -216,7 +323,7 @@ def _url_query(url: str, query: Optional[str]) -> None:
         st.markdown("**Evidence**")
         for i, ev in enumerate(result.evidence, 1):
             heading = ev.provenance.get("section_heading") or "whole page"
-            with st.expander(f"[{i}] {ev.provenance.get('source_url')} — {heading}"):
+            with st.expander(f"[{i}] {ev.provenance.get('source_url')} \u2014 {heading}"):
                 st.write(ev.provenance)
                 st.write(ev.text)
 
