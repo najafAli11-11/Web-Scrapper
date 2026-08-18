@@ -34,6 +34,11 @@
           "type": "integer",
           "minimum": 1
         },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Timeout in seconds for each LLM API call. Prevents indefinite hangs on slow/stuck responses."
+        },
         "tool_choice": {
           "type": "string",
           "enum": ["required", "auto", "none"],

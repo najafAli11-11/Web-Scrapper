@@ -87,6 +87,9 @@ class LiteLLMClient:
         base = self.cfg.get("api_base")
         if base:
             kwargs["api_base"] = base
+        timeout = self.cfg.get("timeout_seconds")
+        if timeout:
+            kwargs["timeout"] = int(timeout)
         return kwargs
 
     @staticmethod
@@ -172,13 +175,17 @@ class LiteLLMClient:
             ),
         }
         try:
-            response = litellm.completion(
-                model=self._model(),
-                api_key=self._api_key(),
-                messages=list(messages) + [instruction],
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
+            call_kwargs = {
+                "model": self._model(),
+                "api_key": self._api_key(),
+                "messages": list(messages) + [instruction],
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            timeout = self.cfg.get("timeout_seconds")
+            if timeout:
+                call_kwargs["timeout"] = int(timeout)
+            response = litellm.completion(**call_kwargs)
             text = response.choices[0].message.content
             self.last_raw_text = text
             parsed = json.loads(text) if text else None

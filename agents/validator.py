@@ -163,6 +163,7 @@ def validate_result(
     logger: Optional[FetchLogger] = None,
     retry_count: int = 0,
     obstacle_cfg: Optional[dict] = None,
+    skip_repair: bool = False,
 ) -> tuple[ValidationResult, ExtractionResult]:
     """Validate an ExtractionResult, repairing once then flagging (Spec req. 9).
 
@@ -206,10 +207,12 @@ def validate_result(
             result,
         )
 
-    if result.content_type == ContentType.UNKNOWN or retry_count >= repair_budget:
+    if result.content_type == ContentType.UNKNOWN or skip_repair or retry_count >= repair_budget:
         flag_reason = (
             "unsupported_content_type"
             if result.content_type == ContentType.UNKNOWN
+            else "skipped_repair"
+            if skip_repair
             else "repair_budget_exhausted"
         )
         _log_attempt(

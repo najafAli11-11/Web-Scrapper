@@ -24,11 +24,15 @@ started|finished summary per invocation.
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Optional
 
 from fetchers.logger import FetchLogger
 from orchestrator.queue import UrlQueue
 from pipeline.ingest import IngestOutcome, ingest_url
+
+DEFAULT_MAX_WORKERS = 1
 
 
 def _transition(
@@ -61,6 +65,54 @@ def _transition(
     )
 
 
+def _process_one(
+    url: str,
+    *,
+    queue: UrlQueue,
+    logger: FetchLogger,
+    agent_cfg: dict,
+    client,
+    embedder,
+    store,
+    pipeline_cfg: dict,
+    retry_cfg: dict,
+    mode: str,
+    ingest: Callable,
+    obstacle_cfg: Optional[dict],
+    fetch_cfg: Optional[dict],
+    browser,
+    lock: threading.Lock,
+    summary: dict,
+) -> None:
+    """Process a single URL and update shared state under lock."""
+    attempts = queue.mark_processing(url)
+    outcome = ingest(
+        url,
+        mode=mode,
+        client=client,
+        agent_cfg=agent_cfg,
+        embedder=embedder,
+        store=store,
+        pipeline_cfg=pipeline_cfg,
+        logger=logger,
+        obstacle_cfg=obstacle_cfg,
+        fetch_cfg=fetch_cfg,
+        browser=browser,
+    )
+    state = _transition(outcome, attempts, retry_cfg, queue, url)
+    row = queue.get(url)
+    logger.log_event(
+        "batch_url_state",
+        url=url,
+        outcome=state,
+        reason=row["reason"] if row else None,
+        details={"attempt": attempts, "ingest_status": outcome.status},
+    )
+    with lock:
+        summary["total"] += 1
+        summary["by_state"][state] = summary["by_state"].get(state, 0) + 1
+
+
 def run_batch(
     urls: list[str],
     *,
@@ -76,41 +128,61 @@ def run_batch(
     ingest: Callable = ingest_url,
     obstacle_cfg: Optional[dict] = None,
     fetch_cfg: Optional[dict] = None,
+    browser=None,
+    max_workers: int = DEFAULT_MAX_WORKERS,
 ) -> dict:
-    """Run one single-pass batch over pending/due URLs. Returns a summary dict."""
+    """Run one single-pass batch over pending/due URLs. Returns a summary dict.
+
+    URLs are processed concurrently with up to ``max_workers`` threads.
+    Each worker shares the browser instance (via separate contexts/pages)
+    and the SQLite WAL-backed logger/queue, which are thread-safe.
+    """
     added = queue.add_urls(urls)
     logger.log_event(
         "batch_run",
         outcome="started",
-        details={"urls_submitted": len(urls), "newly_queued": added},
+        details={"urls_submitted": len(urls), "newly_queued": added, "max_workers": max_workers},
     )
 
+    pending = list(queue.pending_due())
     summary: dict = {"total": 0, "by_state": {}}
-    for url in queue.pending_due():
-        attempts = queue.mark_processing(url)
-        summary["total"] += 1
-        outcome = ingest(
-            url,
-            mode=mode,
-            client=client,
-            agent_cfg=agent_cfg,
-            embedder=embedder,
-            store=store,
-            pipeline_cfg=pipeline_cfg,
-            logger=logger,
-            obstacle_cfg=obstacle_cfg,
-            fetch_cfg=fetch_cfg,
-        )
-        state = _transition(outcome, attempts, retry_cfg, queue, url)
-        row = queue.get(url)
-        logger.log_event(
-            "batch_url_state",
-            url=url,
-            outcome=state,
-            reason=row["reason"] if row else None,
-            details={"attempt": attempts, "ingest_status": outcome.status},
-        )
-        summary["by_state"][state] = summary["by_state"].get(state, 0) + 1
+    lock = threading.Lock()
+
+    if max_workers <= 1 or len(pending) <= 1:
+        for url in pending:
+            _process_one(
+                url, queue=queue, logger=logger, agent_cfg=agent_cfg, client=client,
+                embedder=embedder, store=store, pipeline_cfg=pipeline_cfg, retry_cfg=retry_cfg,
+                mode=mode, ingest=ingest, obstacle_cfg=obstacle_cfg, fetch_cfg=fetch_cfg,
+                browser=browser, lock=lock, summary=summary,
+            )
+    else:
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(pending))) as executor:
+            futures = {
+                executor.submit(
+                    _process_one,
+                    url,
+                    queue=queue, logger=logger, agent_cfg=agent_cfg, client=client,
+                    embedder=embedder, store=store, pipeline_cfg=pipeline_cfg, retry_cfg=retry_cfg,
+                    mode=mode, ingest=ingest, obstacle_cfg=obstacle_cfg, fetch_cfg=fetch_cfg,
+                    browser=browser, lock=lock, summary=summary,
+                ): url
+                for url in pending
+            }
+            for future in as_completed(futures):
+                exc = future.exception()
+                if exc is not None:
+                    url = futures[future]
+                    logger.log_event(
+                        "batch_url_state",
+                        url=url,
+                        outcome="failed",
+                        reason=f"worker exception: {exc}",
+                        details={"ingest_status": "exception"},
+                    )
+                    with lock:
+                        summary["total"] += 1
+                        summary["by_state"]["failed"] = summary["by_state"].get("failed", 0) + 1
 
     logger.log_event("batch_run", outcome="finished", details=summary)
     return summary

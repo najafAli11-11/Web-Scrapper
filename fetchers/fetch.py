@@ -40,6 +40,7 @@ def fetch_page(
     fetch_cfg: Optional[dict] = None,
     logger: Optional[FetchLogger] = None,
     rate_limiter: Optional[RateLimiter] = None,
+    browser=None,
 ) -> FetchResult:
     obstacle_cfg = obstacle_cfg if obstacle_cfg is not None else load_obstacle_config()
     fetch_cfg = fetch_cfg if fetch_cfg is not None else load_fetch_config()
@@ -68,7 +69,7 @@ def fetch_page(
                     reason="static content insufficient, falling back to browser fetch",
                     details={"static_status": static.status_code, "content_type": static.content_type},
                 )
-                return fetch_browser(url, obstacle_cfg=obstacle_cfg, fetch_cfg=fetch_cfg, logger=logger, rate_limiter=rate_limiter)
+                return fetch_browser(url, obstacle_cfg=obstacle_cfg, fetch_cfg=fetch_cfg, logger=logger, rate_limiter=rate_limiter, browser=browser)
             logger.log_event(
                 "fetch_decision",
                 url=url,
@@ -93,7 +94,7 @@ def fetch_page(
         reason=f"static fetch failed ({static.reason}), falling back to browser fetch",
         details={"static_status": static.status_code},
     )
-    return fetch_browser(url, obstacle_cfg=obstacle_cfg, fetch_cfg=fetch_cfg, logger=logger, rate_limiter=rate_limiter)
+    return fetch_browser(url, obstacle_cfg=obstacle_cfg, fetch_cfg=fetch_cfg, logger=logger, rate_limiter=rate_limiter, browser=browser)
 
 
 def main(argv: Optional[list[str]] = None) -> None:

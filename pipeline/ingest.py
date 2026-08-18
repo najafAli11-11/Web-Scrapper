@@ -123,6 +123,7 @@ def ingest_url(
     obstacle_cfg: Optional[dict] = None,
     fetch_cfg: Optional[dict] = None,
     write_to_corpus: bool = True,
+    browser=None,
 ) -> IngestOutcome:
     """Run the full single-URL pipeline and report a queue-mappable outcome.
 
@@ -136,7 +137,7 @@ def ingest_url(
     obstacle_cfg = obstacle_cfg if obstacle_cfg is not None else load_obstacle_config()
     fetch_cfg = fetch_cfg if fetch_cfg is not None else load_fetch_config()
     start = time.monotonic()
-    fetched = fetch_page(url, obstacle_cfg=obstacle_cfg, fetch_cfg=fetch_cfg, logger=logger)
+    fetched = fetch_page(url, obstacle_cfg=obstacle_cfg, fetch_cfg=fetch_cfg, logger=logger, browser=browser)
 
     if fetched.outcome != FetchOutcome.SUCCESS:
         if fetched.outcome == FetchOutcome.BLOCKED:
@@ -181,6 +182,7 @@ def ingest_url(
         agent_cfg=agent_cfg,
         logger=logger,
         obstacle_cfg=obstacle_cfg,
+        skip_repair=not write_to_corpus,
     )
     if not validation.is_valid:
         _log_ingest_lifecycle(logger, url, "validate_done", start, status="flagged",

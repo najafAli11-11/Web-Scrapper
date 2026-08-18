@@ -70,6 +70,8 @@ def _run_import(argv: list[str]) -> None:
     parser.add_argument("--reset", action="store_true",
                         help="Clear the queue state first (fresh run / manual re-ingestion)")
     parser.add_argument("--mode", choices=["batch", "single"], default="batch")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Number of concurrent worker threads for batch ingestion (default: 1, sequential)")
     args = parser.parse_args(argv)
 
     urls = _read_urls(Path(args.urls_file))
@@ -93,20 +95,44 @@ def _run_import(argv: list[str]) -> None:
             pipeline_cfg["store"]["chroma_path"],
             collection_prefix=pipeline_cfg["store"]["collection_prefix"],
         )
-        summary = run_batch(
-            urls,
-            queue=queue,
-            logger=logger,
-            agent_cfg=agent_cfg,
-            client=client,
-            embedder=embedder,
-            store=store,
-            pipeline_cfg=pipeline_cfg,
-            retry_cfg=retry_cfg,
-            mode=args.mode,
-            obstacle_cfg=obstacle_cfg,
-            fetch_cfg=fetch_cfg,
-        )
+
+        browser = None
+        pw = None
+        try:
+            from playwright.sync_api import sync_playwright
+            pw = sync_playwright().start()
+            browser = pw.chromium.launch(headless=True)
+        except Exception:
+            pass
+
+        try:
+            summary = run_batch(
+                urls,
+                queue=queue,
+                logger=logger,
+                agent_cfg=agent_cfg,
+                client=client,
+                embedder=embedder,
+                store=store,
+                pipeline_cfg=pipeline_cfg,
+                retry_cfg=retry_cfg,
+                mode=args.mode,
+                obstacle_cfg=obstacle_cfg,
+                fetch_cfg=fetch_cfg,
+                browser=browser,
+                max_workers=args.workers,
+            )
+        finally:
+            if browser:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+            if pw:
+                try:
+                    pw.stop()
+                except Exception:
+                    pass
 
     print(f"processed={summary['total']}")
     for state, n in sorted(summary["by_state"].items()):
