@@ -124,7 +124,9 @@ def test_parse_retry_recovers_then_succeeds(tmp_path):
         assert "could not be used" in client.calls[1]["messages"][-1]["content"]
         rows = logger.rows_for_url("https://example.com/article")
         attempts = [r for r in rows if r["event_type"] == "extraction_attempt"]
-        assert len(attempts) == 1 and attempts[0]["outcome"] == "extracted"
+        assert len(attempts) == 2
+        assert attempts[0]["outcome"] == "retrying"
+        assert attempts[1]["outcome"] == "extracted"
 
 
 def test_parse_retry_exhausted_flags_record(tmp_path):
@@ -146,7 +148,10 @@ def test_parse_retry_exhausted_flags_record(tmp_path):
         flagged = [r for r in rows if r["event_type"] == "extraction_flagged"]
         attempts = [r for r in rows if r["event_type"] == "extraction_attempt"]
         assert len(flagged) == 1 and flagged[0]["outcome"] == "flagged"
-        assert len(attempts) == 1 and attempts[0]["outcome"] == "flagged"
+        assert len(attempts) == 3
+        assert attempts[0]["outcome"] == "retrying"
+        assert attempts[1]["outcome"] == "retrying"
+        assert attempts[2]["outcome"] == "flagged"
 
 
 def test_schema_violation_triggers_retry_then_flags(tmp_path):
@@ -298,3 +303,57 @@ def test_api_key_reads_from_dotenv(tmp_path, monkeypatch):
                    "parse_retry": 1}}
     client = LiteLLMClient(cfg)
     assert client._api_key() == "sekrit-value"
+
+
+def test_lite_llm_client_logs_tool_use_fallback(tmp_path):
+    from agents.llm.client import LiteLLMClient
+    from fetchers.logger import FetchLogger
+
+    cfg = {"llm": {"provider": "stub", "model": "stub", "temperature": 0.1,
+                   "max_tokens": 100, "tool_choice": "required"}}
+    with FetchLogger(tmp_path / "logs.db") as logger:
+        client = LiteLLMClient(cfg, logger=logger)
+        result = client.complete_structured(
+            messages=[{"role": "user", "content": "test"}],
+            tool_name="test_tool",
+            tool_schema={"type": "object", "properties": {"x": {"type": "string"}}},
+            temperature=0.1,
+            max_tokens=100,
+        )
+        rows = logger.recent_events()
+    llm_events = [r for r in rows if r["event_type"] == "llm_call"]
+    assert len(llm_events) >= 1
+    outcomes = [r["outcome"] for r in llm_events]
+    assert "tool_use_failed" in outcomes or "json_mode_failed" in outcomes
+
+
+def test_llm_client_logs_success_event(tmp_path):
+    from agents.llm.client import LiteLLMClient
+    from fetchers.logger import FetchLogger
+    import litellm as litellm_mod
+
+    cfg = {"llm": {"provider": "stub", "model": "stub", "temperature": 0.1,
+                   "max_tokens": 100, "tool_choice": "required"}}
+    with FetchLogger(tmp_path / "logs.db") as logger:
+        client = LiteLLMClient(cfg, logger=logger)
+        import unittest.mock as mock
+        fake_response = mock.MagicMock()
+        fake_response.choices = [mock.MagicMock()]
+        fake_response.choices[0].message.tool_calls = [mock.MagicMock()]
+        fake_response.choices[0].message.tool_calls[0].function = mock.MagicMock()
+        fake_response.choices[0].message.tool_calls[0].function.arguments = '{"x": "hello"}'
+        fake_response.choices[0].message.content = None
+
+        with mock.patch.object(litellm_mod, "completion", return_value=fake_response):
+            result = client.complete_structured(
+                messages=[{"role": "user", "content": "test"}],
+                tool_name="test_tool",
+                tool_schema={"type": "object", "properties": {"x": {"type": "string"}}},
+                temperature=0.1,
+                max_tokens=100,
+            )
+        rows = logger.recent_events()
+    llm_events = [r for r in rows if r["event_type"] == "llm_call"]
+    outcomes = [r["outcome"] for r in llm_events]
+    assert "success" in outcomes
+    assert result == {"x": "hello"}

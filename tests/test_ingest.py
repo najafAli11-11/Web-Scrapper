@@ -214,7 +214,7 @@ def test_write_to_corpus_false_unchanged_for_blocked_and_no_content(monkeypatch)
 def test_flagged_when_chunking_fails_but_keeps_result(monkeypatch):
     stub_valid_pipeline(monkeypatch)
 
-    def boom(result, max_chunk_chars=2000):
+    def boom(result, max_chunk_chars=2000, **kwargs):
         raise ValueError("no sections to chunk: extraction result is empty")
 
     monkeypatch.setattr(ing, "chunk_result", boom)
@@ -236,7 +236,7 @@ def test_store_result_success(tmp_path):
 def test_store_result_logs_chunk_failed_event(tmp_path, monkeypatch):
     logger = FetchLogger(tmp_path / "events.db")
 
-    def boom(result, max_chunk_chars=2000):
+    def boom(result, max_chunk_chars=2000, **kwargs):
         raise ValueError("no sections to chunk: extraction result is empty")
 
     monkeypatch.setattr(ing, "chunk_result", boom)
@@ -301,3 +301,83 @@ def test_format_chunk_report():
     report, code = format_chunk_report(0, "corpus_fake_1024", "no sections to chunk")
     assert report == "stored_chunks=0 collection=corpus_fake_1024\nchunk_failed reason=no sections to chunk"
     assert code == 1
+
+
+def test_ingest_lifecycle_events_logged(monkeypatch, tmp_path):
+    stub_valid_pipeline(monkeypatch)
+    with FetchLogger(tmp_path / "logs.db") as logger:
+        out = run(logger=logger)
+        assert out.status == "stored"
+        rows = logger.rows_for_url(U)
+    lifecycle = [r for r in rows if r["event_type"] == "ingest_lifecycle"]
+    stages = [r["outcome"] for r in lifecycle]
+    assert "store_start" in stages
+    assert "completed" in stages
+    import json
+    completed = [r for r in lifecycle if r["outcome"] == "completed"][0]
+    details = json.loads(completed["details_json"])
+    assert "duration_seconds" in details
+
+
+def test_ingest_lifecycle_for_blocked(monkeypatch, tmp_path):
+    import json as _json
+    monkeypatch.setattr(ing, "fetch_page", lambda url, **kw: fetch_result(
+        FetchOutcome.BLOCKED, reason="captcha gate detected"
+    ))
+    with FetchLogger(tmp_path / "logs.db") as logger:
+        out = run(logger=logger)
+        assert out.status == "blocked"
+        rows = logger.rows_for_url(U)
+    lifecycle = [r for r in rows if r["event_type"] == "ingest_lifecycle"]
+    stages = [r["outcome"] for r in lifecycle]
+    assert "fetch_done" in stages
+    blocked_lc = [r for r in lifecycle if r["outcome"] == "fetch_done"][0]
+    details = _json.loads(blocked_lc["details_json"])
+    assert details["status"] == "blocked"
+
+
+def test_ingest_lifecycle_for_fetch_failed(monkeypatch, tmp_path):
+    import json as _json
+    monkeypatch.setattr(ing, "fetch_page", lambda url, **kw: fetch_result(
+        FetchOutcome.FAILED, reason="navigation error"
+    ))
+    with FetchLogger(tmp_path / "logs.db") as logger:
+        out = run(logger=logger)
+        assert out.status == "fetch_failed"
+        rows = logger.rows_for_url(U)
+    lifecycle = [r for r in rows if r["event_type"] == "ingest_lifecycle"]
+    stages = [r["outcome"] for r in lifecycle]
+    assert "fetch_done" in stages
+    ff_lc = [r for r in lifecycle if r["outcome"] == "fetch_done"][0]
+    details = _json.loads(ff_lc["details_json"])
+    assert details["status"] == "fetch_failed"
+
+
+def test_store_result_embed_failure_logs_chunk_failed(tmp_path):
+    class BrokenEmbedder:
+        model_name = "broken"
+        dimension = 4
+        def embed(self, texts):
+            raise RuntimeError("CUDA out of memory")
+
+    logger = FetchLogger(tmp_path / "events.db")
+    stored, err = store_result(make_result(), CFG, BrokenEmbedder(), FakeStore(), logger)
+    assert stored == 0
+    assert "CUDA out of memory" in err
+    events = [r for r in logger.recent_events() if r["event_type"] == "chunk_failed"]
+    assert len(events) == 1
+    assert "embedder failed" in events[0]["reason"]
+
+
+def test_store_result_store_failure_logs_chunk_failed(tmp_path):
+    class BrokenStore:
+        def store_chunks(self, chunks, embeddings, *, collection_name, logger=None):
+            raise RuntimeError("ChromaDB connection refused")
+
+    logger = FetchLogger(tmp_path / "events.db")
+    stored, err = store_result(make_result(), CFG, FakeEmbedder(), BrokenStore(), logger)
+    assert stored == 0
+    assert "ChromaDB connection refused" in err
+    events = [r for r in logger.recent_events() if r["event_type"] == "chunk_failed"]
+    assert len(events) == 1
+    assert "store failed" in events[0]["reason"]

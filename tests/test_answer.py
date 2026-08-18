@@ -173,3 +173,67 @@ def test_generate_answer_logs_event_when_llm_call_raises(tmp_path):
         assert "llm call failed" in events[0]["reason"]
     finally:
         logger.close()
+
+
+def test_answer_failure_event_includes_url(tmp_path):
+    logger = FetchLogger(tmp_path / "events.db")
+    try:
+        answer = generate_answer(
+            "Q", [evidence("some text")], client=FakeClient(None), agent_cfg=CFG, logger=logger,
+            url="https://example.com/page",
+        )
+        events = failure_events(logger)
+        assert answer is None
+        assert len(events) == 1
+        assert events[0]["url"] == "https://example.com/page"
+    finally:
+        logger.close()
+
+
+def test_answer_fallback_rescue_logged(tmp_path):
+    from agents.llm.client import LiteLLMClient
+
+    class MarkdownClient(LiteLLMClient):
+        def __init__(self):
+            super().__init__(CFG)
+            self.last_raw_text = (
+                "**Answer**\nBoilerplate is stripped before extraction.\n\n"
+                "**Citations**\n- source_url: https://example.com/a\n  quote: Stripping removes nav and ads."
+            )
+
+        def complete_structured(self, **kwargs):
+            return None  # structured path fails
+
+    logger = FetchLogger(tmp_path / "events.db")
+    try:
+        client = MarkdownClient()
+        answer = generate_answer(
+            "What runs before extraction?", [evidence("Stripping removes nav and ads.")],
+            client=client, agent_cfg=CFG, logger=logger, url="https://example.com/page",
+        )
+        rescue_events = [e for e in logger.recent_events() if e["event_type"] == "answer_fallback_rescued"]
+        assert answer is not None
+        assert answer.answer  # answer was rescued from markdown
+        assert len(rescue_events) == 1
+        assert rescue_events[0]["url"] == "https://example.com/page"
+    finally:
+        logger.close()
+
+
+def test_answer_unwrap_rescue_logged(tmp_path):
+    inner_json = json.dumps({"answer": "unwrapped answer", "citations": [{"source_url": "https://example.com/a", "quote": "q", "scrape_timestamp": "2025-01-01T00:00:00"}]})
+    valid_citation = [{"source_url": "https://example.com/a", "quote": "q", "scrape_timestamp": "2025-01-01T00:00:00"}]
+    client = FakeClient({"answer": inner_json, "citations": valid_citation})
+    logger = FetchLogger(tmp_path / "events.db")
+    try:
+        answer = generate_answer(
+            "Q", [evidence("some text")], client=client, agent_cfg=CFG, logger=logger,
+            url="https://example.com/page",
+        )
+        unwrap_events = [e for e in logger.recent_events() if e["event_type"] == "answer_unwrap_rescue"]
+        assert answer is not None
+        assert answer.answer == "unwrapped answer"
+        assert len(unwrap_events) == 1
+        assert unwrap_events[0]["outcome"] == "unwrapped"
+    finally:
+        logger.close()

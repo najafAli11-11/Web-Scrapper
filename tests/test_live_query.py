@@ -207,4 +207,54 @@ def test_corpus_miss_logs_single_shot_ok_event(tmp_path):
     assert len(events) == 1
     assert events[0]["outcome"] == "corpus_miss_single_shot_ok"
     assert json.loads(events[0]["details_json"])["found_in_corpus"] is False
-    assert json.loads(events[0]["details_json"])["source_used"] == "live_scrape"
+
+
+def test_corpus_count_error_returns_error_status(tmp_path):
+    class BrokenStore:
+        def count(self, *, collection_name, where=None):
+            raise RuntimeError("ChromaDB down")
+        def query(self, embedding, k, *, collection_name, where=None):
+            return []
+        def get(self, *, collection_name, where=None):
+            return []
+
+    logger = FetchLogger(tmp_path / "events.db")
+    try:
+        result = live_query(
+            URL, logger=logger, client=None, agent_cfg={},
+            embedder=FakeEmbedder(), store=BrokenStore(), pipeline_cfg=CFG,
+        )
+        events = [e for e in logger.recent_events() if e["event_type"] == "live_query"]
+        assert result.status == "error"
+        assert result.found_in_corpus is False
+        assert result.source_used == "error"
+        assert len(events) == 1
+        assert events[0]["outcome"] == "corpus_error"
+    finally:
+        logger.close()
+
+
+def test_corpus_retrieve_error_returns_error_status(tmp_path):
+    class BrokenRetrieveStore:
+        def count(self, *, collection_name, where=None):
+            return 1
+        def query(self, embedding, k, *, collection_name, where=None):
+            raise RuntimeError("query timeout")
+        def get(self, *, collection_name, where=None):
+            raise RuntimeError("get timeout")
+
+    logger = FetchLogger(tmp_path / "events.db")
+    try:
+        result = live_query(
+            URL, query="test", logger=logger, client=None, agent_cfg={},
+            embedder=FakeEmbedder(), store=BrokenRetrieveStore(), pipeline_cfg=CFG,
+        )
+        events = [e for e in logger.recent_events() if e["event_type"] == "live_query"]
+        assert result.status == "error"
+        assert result.source_used == "error"
+        assert len(events) == 1
+        assert events[0]["outcome"] == "corpus_error"
+        details = json.loads(events[0]["details_json"])
+        assert details["stage"] == "retrieve"
+    finally:
+        logger.close()

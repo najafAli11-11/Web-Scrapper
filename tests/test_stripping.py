@@ -120,3 +120,37 @@ def test_logs_strip_attempt(tmp_path):
     assert strip_rows[0]["outcome"] == "stripped"
     assert "method" in strip_rows[0]["details_json"]
     assert strip_rows[0]["url"] == "https://example.com/article"
+
+
+def test_strip_parse_warning_logged_on_trafilatura_failure(tmp_path, monkeypatch):
+    import pipeline.strip as strip_mod
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("trafilatura exploded")
+
+    monkeypatch.setattr(strip_mod, "trafilatura", type("M", (), {"extract": staticmethod(boom)})())
+
+    with FetchLogger(tmp_path / "logs.db") as logger:
+        result = strip_html("<html><body><p>test content here</p></body></html>",
+                            url="https://example.com/bad", logger=logger)
+        rows = logger.rows_for_url("https://example.com/bad")
+
+    warnings = [r for r in rows if r["event_type"] == "strip_parse_warning"]
+    assert len(warnings) >= 1
+    assert warnings[0]["outcome"] == "fallback"
+    assert "trafilatura" in (warnings[0]["reason"] or "").lower()
+    assert result.text  # content still returned via fallback
+
+
+def test_strip_title_extraction_failure_logged(tmp_path):
+    with FetchLogger(tmp_path / "logs.db") as logger:
+        result = strip_html("<html><body><p>no title here</p></body></html>",
+                            url="https://example.com/notitle", logger=logger)
+        rows = logger.rows_for_url("https://example.com/notitle")
+
+    # No lxml failure on valid HTML, just no title found — no warning expected
+    warnings = [r for r in rows if r["event_type"] == "strip_parse_warning"]
+    title_warnings = [r for r in warnings if "title_extraction" in (r.get("details_json") or "")]
+    # For valid HTML, title extraction simply returns None — no warning
+    assert len(title_warnings) == 0
+    assert result.title is None

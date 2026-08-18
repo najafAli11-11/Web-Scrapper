@@ -150,3 +150,32 @@ def test_small_sections_beside_oversized_section_coexist():
     assert chunks[0].content == "small"
     assert chunks[1].section_heading == "B"
     assert all(c.chunk_index <= c.chunk_total for c in chunks)
+
+
+def test_chunk_complete_event_logged(tmp_path):
+    from fetchers.logger import FetchLogger
+    with FetchLogger(tmp_path / "logs.db") as logger:
+        result = _result([_sec("hello world", heading="Intro"), _sec("another section", heading="Body")])
+        chunks = chunk_result(result, max_chunk_chars=2000, logger=logger)
+        rows = logger.rows_for_url(result.source_url)
+    events = [r for r in rows if r["event_type"] == "chunk_complete"]
+    assert len(events) == 1
+    import json
+    details = json.loads(events[0]["details_json"])
+    assert details["num_sections"] == 2
+    assert details["num_chunks"] == len(chunks)
+    assert details["sections_split"] == []
+
+
+def test_chunk_complete_event_logs_split_sections(tmp_path):
+    from fetchers.logger import FetchLogger
+    with FetchLogger(tmp_path / "logs.db") as logger:
+        long_text = "word " * 500
+        result = _result([_sec(long_text, heading="Long")])
+        chunk_result(result, max_chunk_chars=200, logger=logger)
+        rows = logger.rows_for_url(result.source_url)
+    events = [r for r in rows if r["event_type"] == "chunk_complete"]
+    assert len(events) == 1
+    import json
+    details = json.loads(events[0]["details_json"])
+    assert details["sections_split"] == [1]

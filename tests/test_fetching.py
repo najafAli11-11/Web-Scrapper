@@ -124,7 +124,9 @@ def test_static_success(server, pipeline):
     assert len(attempts) == 1
     assert attempts[0]["outcome"] == "success"
     assert attempts[0]["url"] == url_for(port, "/")
-    assert not [r for r in rows if r["event_type"] == "fetch_decision"]  # no fallback
+    decisions = [r for r in rows if r["event_type"] == "fetch_decision"]
+    assert len(decisions) == 1
+    assert decisions[0]["outcome"] == "kept_static"
 
 
 def test_static_403_blocked_no_browser(server, pipeline, monkeypatch):
@@ -144,6 +146,11 @@ def test_static_403_blocked_no_browser(server, pipeline, monkeypatch):
     assert res.fetcher == "static"
     assert "403" in (res.reason or "")
     assert called == [], "browser must not be invoked for a hard 403 (Rule 7)"
+
+    rows = FetchLogger(deps["logger"].db_path).rows_for_url(url_for(port, "/"))
+    decisions = [r for r in rows if r["event_type"] == "fetch_decision"]
+    assert len(decisions) == 1
+    assert decisions[0]["outcome"] == "no_fallback"
 
 
 def test_js_shell_falls_back_to_browser(server, pipeline, monkeypatch):
@@ -376,3 +383,40 @@ def test_browser_blocked_clicks_noop_exhausted_fails(server, pipeline):
     rows = FetchLogger(deps["logger"].db_path).rows_for_url(url_for(port, "/"))
     obstacles = [r for r in rows if r["event_type"] == "obstacle_detected"]
     assert any("blocked_clicks" in (r.get("details_json") or "") for r in obstacles)
+
+
+def test_encoding_fallback_logged(server, pipeline):
+    port = server
+    _Handler.routes["/"] = {
+        "body": "caf\xe9".encode("latin-1"),
+        "content_type": "text/html; charset=utf-8",
+    }
+    deps = pipeline()
+    try:
+        res = fetch_mod.fetch_page(url_for(port, "/"), **deps)
+    finally:
+        deps["logger"].close()
+
+    rows = FetchLogger(deps["logger"].db_path).rows_for_url(url_for(port, "/"))
+    obstacles = [r for r in rows if r["event_type"] == "obstacle_detected"]
+    encoding_events = [r for r in obstacles if "encoding_fallback" in (r.get("details_json") or "")]
+    assert len(encoding_events) == 1
+
+
+def test_rate_limiter_wait_event_logged(tmp_path):
+    from fetchers.rate_limit import RateLimiter
+    from fetchers.logger import FetchLogger
+
+    logger = FetchLogger(tmp_path / "logs.db")
+    limiter = RateLimiter(min_interval_seconds=1.0)
+    try:
+        limiter.wait("http://example.com/a", logger=logger)
+        limiter.wait("http://example.com/a", logger=logger)
+        rows = logger.recent_events()
+    finally:
+        logger.close()
+
+    wait_events = [r for r in rows if r["event_type"] == "rate_limit_wait"]
+    assert len(wait_events) == 1
+    assert wait_events[0]["outcome"] == "wait"
+    assert "example.com" in (wait_events[0].get("details_json") or "")
