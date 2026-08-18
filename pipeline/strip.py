@@ -202,6 +202,7 @@ def strip_html(
     *,
     url: Optional[str] = None,
     logger: Optional[FetchLogger] = None,
+    browser_visible_text: Optional[str] = None,
 ) -> StripResult:
     """Strip boilerplate from an HTML/plain-text string.
 
@@ -257,15 +258,42 @@ def strip_html(
             result.blocks = blocks
             result.num_blocks = len(blocks)
             result.num_tables = tables
-            result.outcome = StripOutcome.STRIPPED
             result.text = "\n\n".join(
                 (b.heading + "\n" if b.heading else "") + b.text
                 for b in blocks
                 if b.text
             )
             result.chars_after = len(result.text)
-            _log_strip(logger, result)
-            return result
+
+            # If trafilatura returned very little content relative to input,
+            # it likely failed to parse SPA/custom components. Fall through
+            # to the lxml text_content() fallback for better coverage.
+            if chars_before > 5000 and result.chars_after / chars_before < 0.05:
+                if logger is not None:
+                    logger.log_event(
+                        "strip_parse_warning",
+                        url=url,
+                        outcome="fallback",
+                        reason=f"trafilatura extracted too little ({result.chars_after}/{chars_before} chars, {result.chars_after/chars_before*100:.1f}%), trying lxml fallback",
+                        details={"stage": "ratio_fallback", "chars_before": chars_before, "chars_after": result.chars_after},
+                    )
+                # If browser provided visible text directly, use it —
+                # it's far more reliable than lxml for SPA content.
+                if browser_visible_text and browser_visible_text.strip():
+                    text = re.sub(r"[ \t]+", " ", browser_visible_text).strip()
+                    block = StripBlock(text=text)
+                    result.blocks = [block]
+                    result.num_blocks = 1
+                    result.text = text
+                    result.chars_after = len(text)
+                    result.outcome = StripOutcome.FALLBACK
+                    result.method = "browser-visible-text"
+                    _log_strip(logger, result)
+                    return result
+            else:
+                result.outcome = StripOutcome.STRIPPED
+                _log_strip(logger, result)
+                return result
 
     # Fallback: Trafilatura found nothing usable. Keep the text so nothing is
     # silently dropped (Rule 5); this is NOT a content-type routing decision.

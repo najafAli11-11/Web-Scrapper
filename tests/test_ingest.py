@@ -75,7 +75,7 @@ def stub_valid_pipeline(monkeypatch):
     monkeypatch.setattr(ing, "fetch_page", lambda url, **kw: fetch_result(
         FetchOutcome.SUCCESS, html="<html><body>x</body></html>", content_type="text/html"
     ))
-    monkeypatch.setattr(ing, "strip_html", lambda html, url=None, logger=None: SimpleNamespace(text="stripped", title="Page"))
+    monkeypatch.setattr(ing, "strip_html", lambda html, url=None, logger=None, browser_visible_text=None: SimpleNamespace(text="stripped", title="Page"))
     monkeypatch.setattr(ing, "extract_content", lambda *a, **k: make_result())
     monkeypatch.setattr(ing, "validate_result", lambda *a, **k: (make_validation(True), make_result()))
 

@@ -43,3 +43,4 @@ class FetchResult:
     final_url: Optional[str] = None
     fetcher: Optional[FetcherName] = None
     reason: Optional[str] = None
+    visible_text: Optional[str] = None

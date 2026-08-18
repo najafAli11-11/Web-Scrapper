@@ -152,7 +152,7 @@ def ingest_url(
 
     ctype = mime_to_content_type(fetched.content_type)
     if ctype == ContentType.HTML and fetched.html:
-        stripped = strip_html(fetched.html, url=url, logger=logger)
+        stripped = strip_html(fetched.html, url=url, logger=logger, browser_visible_text=fetched.visible_text)
         content: object = stripped.text
         page_title = stripped.title
     elif fetched.raw is not None:

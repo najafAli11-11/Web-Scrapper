@@ -81,6 +81,7 @@ def _result(
     status_code: Optional[int] = None,
     content_type: Optional[str] = None,
     final_url: Optional[str] = None,
+    visible_text: Optional[str] = None,
 ) -> FetchResult:
     return FetchResult(
         url=url,
@@ -91,6 +92,7 @@ def _result(
         final_url=final_url,
         fetcher=fetcher,  # type: ignore[arg-type]
         reason=reason,
+        visible_text=visible_text,
     )
 
 
@@ -565,6 +567,15 @@ def fetch_browser(
                 result = _result(url, FetchOutcome.FAILED, f"page.content() failed: {exc}", fetcher="browser")
                 logger.log_fetch_attempt(result)
                 return result
+
+            # Capture visible text directly from the rendered page.
+            # For SPA pages (Google News etc.) this is far more reliable than
+            # trafilatura, which can't parse custom web components.
+            try:
+                visible_text = page.locator("body").inner_text(timeout=5000)
+            except PlaywrightError:
+                visible_text = None
+
             status = response.status if response is not None else None
             content_type = (response.headers or {}).get("content-type") or "text/html"
             final_url = page.url
@@ -579,7 +590,7 @@ def fetch_browser(
                 logger.log_fetch_attempt(result)
                 return result
 
-            result = _result(url, FetchOutcome.SUCCESS, None, fetcher="browser", html=html, status_code=status, content_type=content_type, final_url=final_url)
+            result = _result(url, FetchOutcome.SUCCESS, None, fetcher="browser", html=html, status_code=status, content_type=content_type, final_url=final_url, visible_text=visible_text)
             logger.log_fetch_attempt(result)
             return result
         finally:
