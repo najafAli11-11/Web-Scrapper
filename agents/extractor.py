@@ -36,7 +36,7 @@ from pydantic import ValidationError
 from agents.config_loader import load_agent_config
 from agents.llm.client import LLMClient, LiteLLMClient
 from fetchers.logger import FetchLogger
-from schemas.extraction import ContentType, ExtractionResult
+from schemas.extraction import ContentType, ExtractionResult, Section
 
 PROMPT_PATH = Path(__file__).resolve().parents[1] / "agents" / "prompts" / "extract.txt"
 REPAIR_PROMPT_PATH = Path(__file__).resolve().parents[1] / "agents" / "prompts" / "repair.txt"
@@ -328,6 +328,26 @@ def extract_content(
         result.source_url = source_url
         result.scrape_timestamp = scrape_timestamp
         result.content_type = content_type
+
+        # Rule 5: never silently drop content. If the LLM returned 0 sections
+        # but we have non-empty content, wrap it in a single fallback section
+        # so downstream (chunking, RAG) always has something to work with.
+        content_str = str(content) if content else ""
+        if not result.sections and content_str.strip():
+            fallback_text = content_str.strip()
+            result.sections = [Section(heading=None, content=fallback_text)]
+            result.confidence = max(result.confidence, 0.3)
+            result.extraction_notes = (
+                (result.extraction_notes or "")
+                + " | LLM returned 0 sections; raw content wrapped as fallback"
+            ).strip(" |")
+            _log_attempt(
+                logger, source_url, outcome="fallback_section", mode=mode,
+                content_type=content_type.value, confidence=result.confidence,
+                num_sections=1, truncated=False, page_title=page_title,
+                model=model_name,
+            )
+
         _log_attempt(
             logger, source_url, outcome="extracted", mode=mode,
             content_type=content_type.value, confidence=result.confidence,

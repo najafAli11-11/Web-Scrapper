@@ -140,14 +140,13 @@ def test_stays_broken_flags_after_exactly_one_repair(tmp_path):
         assert [r["outcome"] for r in rows if r["event_type"] == "validation_attempt"] == ["repairing", "failed"]
         flags = [r for r in rows if r["event_type"] == "validation_flagged"]
         assert len(flags) == 1
-        assert "no content extracted" in flags[0]["reason"]
+        assert "confidence below threshold" in flags[0]["reason"]
         assert json.loads(flags[0]["details_json"])["flag_reason"] == "repair_budget_exhausted"
     assert vr.is_valid is False
     assert vr.should_retry is False
     assert vr.retry_count == 1
     assert len(client.calls) == 1
-    assert vr.errors == ["no content extracted: sections list is empty",
-                         "confidence below threshold"]
+    assert vr.errors == ["confidence below threshold"]
 
 
 # --- every deterministic error goes through repair-then-flag -------------
