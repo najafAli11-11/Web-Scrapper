@@ -30,6 +30,20 @@ def visible_text_length(raw_html: str) -> int:
     return len(_WS_RE.sub("", text))
 
 
+def _is_known_error_page(raw_html: str) -> bool:
+    """True if the HTML is a known error/verification boilerplate page
+    that is never real content — JavaScript disabled, robot check, etc."""
+    lower = raw_html.lower()
+    error_phrases = [
+        "javascript is disabled",
+        "robot check",
+        "verify you're not a robot",
+        "access denied",
+        "cloudflare",
+    ]
+    return any(phrase in lower for phrase in error_phrases)
+
+
 def looks_empty(raw_html: str, threshold_chars: int = 200) -> bool:
     """True when fetched HTML has too little visible text to be meaningful
     (empty body, JS shell that renders nothing server-side).
@@ -37,12 +51,14 @@ def looks_empty(raw_html: str, threshold_chars: int = 200) -> bool:
     Checks three conditions:
       1. Absolute: visible text < threshold_chars
       2. Ratio: visible text < 1% of total HTML size (JS shell detection)
-      3. Error boilerplate: visible text is dominated by "JavaScript is
-         disabled", "robot check", or similar verification prompts
+      3. Known error boilerplate: page is a verification prompt
+          (JavaScript disabled, robot check, etc.) — never real content
     A large HTML page with very little visible text is almost certainly a
     client-side rendered SPA that needs browser rendering.
     """
     if not raw_html:
+        return True
+    if _is_known_error_page(raw_html):
         return True
     visible = visible_text_length(raw_html)
     if visible < threshold_chars:
