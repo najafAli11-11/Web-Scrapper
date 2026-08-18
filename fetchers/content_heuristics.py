@@ -34,9 +34,11 @@ def looks_empty(raw_html: str, threshold_chars: int = 200) -> bool:
     """True when fetched HTML has too little visible text to be meaningful
     (empty body, JS shell that renders nothing server-side).
 
-    Checks two conditions:
+    Checks three conditions:
       1. Absolute: visible text < threshold_chars
       2. Ratio: visible text < 1% of total HTML size (JS shell detection)
+      3. Error boilerplate: visible text is dominated by "JavaScript is
+         disabled", "robot check", or similar verification prompts
     A large HTML page with very little visible text is almost certainly a
     client-side rendered SPA that needs browser rendering.
     """
@@ -47,6 +49,19 @@ def looks_empty(raw_html: str, threshold_chars: int = 200) -> bool:
         return True
     total = len(raw_html)
     if total > 5000 and visible / total < 0.01:
+        return True
+    # Detect error/verification boilerplate that passes absolute/ratio checks
+    # but is not real content — e.g. "JavaScript is disabled", "robot check"
+    lower = raw_html.lower()
+    error_phrases = [
+        "javascript is disabled",
+        "robot check",
+        "verify you're not a robot",
+        "access denied",
+        "cloudflare",
+    ]
+    found = sum(1 for phrase in error_phrases if phrase in lower)
+    if found >= 2 and visible < total * 0.05:
         return True
     return False
 
