@@ -569,7 +569,12 @@ def fetch_browser(
             content_type = (response.headers or {}).get("content-type") or "text/html"
             final_url = page.url
 
-            if looks_empty(html, float(fetch_cfg["empty_content_threshold_chars"])):
+            # For browser-rendered pages, only check absolute visible text length.
+            # The ratio check in looks_empty() doesn't apply here because
+            # page.content() returns the full DOM including all JavaScript,
+            # so the ratio is always low for SPAs even with meaningful content.
+            from fetchers.content_heuristics import visible_text_length
+            if visible_text_length(html) < float(fetch_cfg["empty_content_threshold_chars"]):
                 result = _result(url, FetchOutcome.EMPTY, "browser rendered page is empty/JS shell", fetcher="browser", html=html, status_code=status, content_type=content_type, final_url=final_url)
                 logger.log_fetch_attempt(result)
                 return result
