@@ -29,6 +29,7 @@ neither HTML nor raw bytes.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -68,7 +69,7 @@ def store_result(
 ) -> tuple[int, Optional[str]]:
     """Chunk, embed, and store one validated result. Returns (stored, error)."""
     try:
-        chunks = chunk_result(result, max_chunk_chars=cfg["chunk"]["max_chunk_chars"])
+        chunks = chunk_result(result, max_chunk_chars=cfg["chunk"]["max_chunk_chars"], logger=logger)
     except ValueError as exc:
         if logger is not None:
             logger.log_event(
@@ -79,11 +80,33 @@ def store_result(
                 details={"stage": "chunk"},
             )
         return 0, str(exc)
-    embeddings = embedder.embed([c.content for c in chunks])
-    collection = collection_name_for(
-        embedder.model_name, embedder.dimension, cfg["store"]["collection_prefix"]
-    )
-    stored = store.store_chunks(chunks, embeddings, collection_name=collection, logger=logger)
+    try:
+        embeddings = embedder.embed([c.content for c in chunks])
+    except Exception as exc:
+        if logger is not None:
+            logger.log_event(
+                event_type="chunk_failed",
+                url=result.source_url,
+                outcome="failed",
+                reason=f"embedder failed: {exc}",
+                details={"stage": "embed"},
+            )
+        return 0, f"embedder failed: {exc}"
+    try:
+        collection = collection_name_for(
+            embedder.model_name, embedder.dimension, cfg["store"]["collection_prefix"]
+        )
+        stored = store.store_chunks(chunks, embeddings, collection_name=collection, logger=logger)
+    except Exception as exc:
+        if logger is not None:
+            logger.log_event(
+                event_type="chunk_failed",
+                url=result.source_url,
+                outcome="failed",
+                reason=f"store failed: {exc}",
+                details={"stage": "store"},
+            )
+        return 0, f"store failed: {exc}"
     return stored, None
 
 
@@ -112,11 +135,16 @@ def ingest_url(
     """
     obstacle_cfg = obstacle_cfg if obstacle_cfg is not None else load_obstacle_config()
     fetch_cfg = fetch_cfg if fetch_cfg is not None else load_fetch_config()
+    start = time.monotonic()
     fetched = fetch_page(url, obstacle_cfg=obstacle_cfg, fetch_cfg=fetch_cfg, logger=logger)
 
     if fetched.outcome != FetchOutcome.SUCCESS:
         if fetched.outcome == FetchOutcome.BLOCKED:
+            _log_ingest_lifecycle(logger, url, "fetch_done", start, status="blocked",
+                                 fetch_outcome="blocked")
             return IngestOutcome(status="blocked", reason=fetched.reason, fetch_outcome="blocked")
+        _log_ingest_lifecycle(logger, url, "fetch_done", start, status="fetch_failed",
+                             fetch_outcome=fetched.outcome.value)
         return IngestOutcome(
             status="fetch_failed", reason=fetched.reason, fetch_outcome=fetched.outcome.value
         )
@@ -130,6 +158,7 @@ def ingest_url(
         content = fetched.raw
         page_title = None
     else:
+        _log_ingest_lifecycle(logger, url, "fetch_done", start, status="no_content")
         return IngestOutcome(
             status="no_content", reason="fetch succeeded but no usable content (no html, no raw bytes)"
         )
@@ -154,6 +183,8 @@ def ingest_url(
         obstacle_cfg=obstacle_cfg,
     )
     if not validation.is_valid:
+        _log_ingest_lifecycle(logger, url, "validate_done", start, status="flagged",
+                             num_sections=len(result.sections))
         return IngestOutcome(
             status="flagged",
             reason=f"validation failed: {len(validation.errors)} errors, repair budget exhausted",
@@ -161,6 +192,8 @@ def ingest_url(
         )
 
     if not write_to_corpus:
+        _log_ingest_lifecycle(logger, url, "completed", start, status="stored",
+                             num_sections=len(final_result.sections), written=False)
         return IngestOutcome(
             status="stored",
             stored_chunks=0,
@@ -168,10 +201,31 @@ def ingest_url(
             written=False,
         )
 
+    _log_ingest_lifecycle(logger, url, "store_start", start,
+                         num_sections=len(final_result.sections))
     stored, err = store_result(final_result, pipeline_cfg, embedder, store, logger)
     if err:
+        _log_ingest_lifecycle(logger, url, "completed", start, status="flagged",
+                             reason=err, num_sections=len(final_result.sections))
         return IngestOutcome(status="flagged", reason=err, result=final_result)
+    _log_ingest_lifecycle(logger, url, "completed", start, status="stored",
+                         stored_chunks=stored, num_sections=len(final_result.sections))
     return IngestOutcome(status="stored", stored_chunks=stored, result=final_result, written=True)
+
+
+def _log_ingest_lifecycle(
+    logger, url: str, stage: str, start: float, **extra,
+) -> None:
+    if logger is None:
+        return
+    details = {"stage": stage, "duration_seconds": round(time.monotonic() - start, 2)}
+    details.update(extra)
+    logger.log_event(
+        "ingest_lifecycle",
+        url=url,
+        outcome=stage,
+        details=details,
+    )
 
 
 def format_ingest_report(url: str, outcome: IngestOutcome) -> tuple[str, int]:

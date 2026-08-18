@@ -147,10 +147,18 @@ def _build_blocks(root) -> tuple[list[StripBlock], int]:
     return blocks, tables
 
 
-def _title_from(html: str) -> Optional[str]:
+def _title_from(html: str, *, logger=None, url: str = "") -> Optional[str]:
     try:
         tree = lxml.html.fromstring(html)
-    except Exception:
+    except Exception as exc:
+        if logger is not None:
+            logger.log_event(
+                "strip_parse_warning",
+                url=url,
+                outcome="title_extraction_failed",
+                reason=f"lxml HTML parse failed for title extraction: {exc}",
+                details={"stage": "title_extraction", "error": str(exc)},
+            )
         return None
     for xpath in (".//title", ".//h1"):
         try:
@@ -209,7 +217,7 @@ def strip_html(
         _log_strip(logger, result)
         return result
 
-    result.title = _title_from(html)
+    result.title = _title_from(html, logger=logger, url=url)
 
     try:
         xml = trafilatura.extract(
@@ -220,15 +228,31 @@ def strip_html(
             include_tables=True,
             include_comments=False,
         )
-    except Exception:
+    except Exception as exc:
         xml = None
+        if logger is not None:
+            logger.log_event(
+                "strip_parse_warning",
+                url=url,
+                outcome="fallback",
+                reason=f"trafilatura raised: {exc}",
+                details={"stage": "trafilatura"},
+            )
 
     if xml:
         try:
             root = etree.fromstring(xml.encode("utf-8"))
             blocks, tables = _build_blocks(root)
-        except Exception:
+        except Exception as exc:
             blocks, tables = [], 0
+            if logger is not None:
+                logger.log_event(
+                    "strip_parse_warning",
+                    url=url,
+                    outcome="fallback",
+                    reason=f"xml parse failed: {exc}",
+                    details={"stage": "etree_parse"},
+                )
         if blocks:
             result.blocks = blocks
             result.num_blocks = len(blocks)
@@ -249,8 +273,16 @@ def strip_html(
     if _looks_html(html):
         try:
             text = lxml.html.fromstring(html).text_content()
-        except Exception:
+        except Exception as exc:
             text = html
+            if logger is not None:
+                logger.log_event(
+                    "strip_parse_warning",
+                    url=url,
+                    outcome="fallback",
+                    reason=f"lxml fallback failed: {exc}",
+                    details={"stage": "lxml_fallback"},
+                )
     else:
         text = html
     text = re.sub(r"[ \t]+", " ", text).strip()

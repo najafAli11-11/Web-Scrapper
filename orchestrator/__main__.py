@@ -87,6 +87,7 @@ def _run_import(argv: list[str]) -> None:
     with UrlQueue(args.db) as queue, FetchLogger(args.log) as logger:
         if args.reset:
             queue.reset()
+        client.set_logger(logger)
         embedder = load_embedder(pipeline_cfg, logger=logger)
         store = VectorStore(
             pipeline_cfg["store"]["chroma_path"],
@@ -141,6 +142,7 @@ def _query_import(argv: list[str]) -> None:
     fetch_cfg = load_fetch_config()
 
     with FetchLogger(args.log) as logger:
+        client.set_logger(logger)
         embedder = load_embedder(pipeline_cfg, logger=logger)
         store = VectorStore(
             pipeline_cfg["store"]["chroma_path"],

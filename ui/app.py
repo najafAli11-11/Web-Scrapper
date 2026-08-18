@@ -70,7 +70,9 @@ def _agent_config() -> dict:
 
 @st.cache_resource(show_spinner=False)
 def _llm_client():
-    return LiteLLMClient(_agent_config())
+    client = LiteLLMClient(_agent_config())
+    client.set_logger(_logger())
+    return client
 
 
 @st.cache_resource(show_spinner=False)
@@ -146,7 +148,8 @@ def _corpus_qa(question: str) -> None:
         return
     with st.spinner("Synthesizing the answer..."):
         answer = generate_answer(
-            question, evidence, client=_llm_client(), agent_cfg=_agent_config(), logger=_logger()
+            question, evidence, client=_llm_client(), agent_cfg=_agent_config(), logger=_logger(),
+            url=None,
         )
     if answer is None:
         st.error("Answer synthesis failed — showing raw evidence below (see answer_generation_failed in Logs).")
@@ -200,7 +203,8 @@ def _url_query(url: str, query: Optional[str]) -> None:
         evidence = [{"text": ev.text, "provenance": ev.provenance} for ev in result.evidence]
         with st.spinner("Synthesizing the answer..."):
             answer = generate_answer(
-                query, evidence, client=_llm_client(), agent_cfg=_agent_config(), logger=_logger()
+                query, evidence, client=_llm_client(), agent_cfg=_agent_config(), logger=_logger(),
+                url=url,
             )
         if answer is None:
             st.error("Answer synthesis failed — showing raw evidence below.")

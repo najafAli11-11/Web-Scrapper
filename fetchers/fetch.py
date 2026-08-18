@@ -49,6 +49,13 @@ def fetch_page(
     static = fetch_static(url, obstacle_cfg=obstacle_cfg, fetch_cfg=fetch_cfg, logger=logger, rate_limiter=rate_limiter)
 
     if static.outcome == FetchOutcome.BLOCKED:
+        logger.log_event(
+            "fetch_decision",
+            url=url,
+            outcome="no_fallback",
+            reason="blocked by site (Rule 7), no browser fallback",
+            details={"static_status": static.status_code},
+        )
         return static
 
     if static.outcome == FetchOutcome.SUCCESS:
@@ -62,7 +69,21 @@ def fetch_page(
                     details={"static_status": static.status_code, "content_type": static.content_type},
                 )
                 return fetch_browser(url, obstacle_cfg=obstacle_cfg, fetch_cfg=fetch_cfg, logger=logger, rate_limiter=rate_limiter)
+            logger.log_event(
+                "fetch_decision",
+                url=url,
+                outcome="kept_static",
+                reason="static fetch sufficient",
+                details={"static_status": static.status_code, "content_type": static.content_type},
+            )
             return static
+        logger.log_event(
+            "fetch_decision",
+            url=url,
+            outcome="kept_static",
+            reason="non-HTML content type, static only",
+            details={"static_status": static.status_code, "content_type": static.content_type},
+        )
         return static
 
     logger.log_event(

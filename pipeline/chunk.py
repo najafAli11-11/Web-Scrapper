@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import datetime, timezone
+from typing import Optional
 
 from schemas.chunk import DocumentChunk
 from schemas.extraction import ExtractionResult
@@ -82,7 +83,7 @@ def _split_section(content: str, max_chunk_chars: int) -> list[str]:
     return pieces
 
 
-def chunk_result(result: ExtractionResult, *, max_chunk_chars: int = 2000) -> list[DocumentChunk]:
+def chunk_result(result: ExtractionResult, *, max_chunk_chars: int = 2000, logger=None) -> list[DocumentChunk]:
     """Convert a validated ExtractionResult into semantic chunks.
 
     One chunk per section (split further only when a section exceeds
@@ -94,10 +95,13 @@ def chunk_result(result: ExtractionResult, *, max_chunk_chars: int = 2000) -> li
         raise ValueError("no sections to chunk: extraction result is empty")
     ingest_timestamp = datetime.now(timezone.utc)
     chunks: list[DocumentChunk] = []
+    sections_split: list[int] = []
     for section_index, section in enumerate(result.sections, start=1):
         if not section.content.strip():
             raise ValueError(f"section {section_index} has empty content")
         pieces = _split_section(section.content, max_chunk_chars)
+        if len(pieces) > 1:
+            sections_split.append(section_index)
         for chunk_index, piece in enumerate(pieces, start=1):
             chunks.append(
                 DocumentChunk(
@@ -117,4 +121,17 @@ def chunk_result(result: ExtractionResult, *, max_chunk_chars: int = 2000) -> li
                     ingest_timestamp=ingest_timestamp,
                 )
             )
+    if logger is not None:
+        logger.log_event(
+            "chunk_complete",
+            url=result.source_url,
+            outcome="ok",
+            reason=None,
+            details={
+                "num_sections": len(result.sections),
+                "num_chunks": len(chunks),
+                "sections_split": sections_split,
+                "max_chunk_chars": max_chunk_chars,
+            },
+        )
     return chunks

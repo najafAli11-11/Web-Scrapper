@@ -157,13 +157,24 @@ class VectorStore:
                     outcome="begin",
                     details={"planned_chunks": len(items), "collection": collection_name},
                 )
-            collection.delete(where={"source_url": url})
-            collection.add(
-                ids=[c.chunk_id for c, _ in items],
-                embeddings=[e for _, e in items],
-                documents=[c.content for c, _ in items],
-                metadatas=[chunk_metadata(c) for c, _ in items],
-            )
+            try:
+                collection.delete(where={"source_url": url})
+                collection.add(
+                    ids=[c.chunk_id for c, _ in items],
+                    embeddings=[e for _, e in items],
+                    documents=[c.content for c, _ in items],
+                    metadatas=[chunk_metadata(c) for c, _ in items],
+                )
+            except Exception as exc:
+                if logger is not None:
+                    logger.log_event(
+                        event_type="chunk_ingest_failed",
+                        url=url,
+                        outcome="failed",
+                        reason=f"ChromaDB operation failed: {exc}",
+                        details={"error": str(exc), "collection": collection_name, "chunk_count": len(items)},
+                    )
+                raise
             stored += len(items)
             if logger is not None:
                 logger.log_event(

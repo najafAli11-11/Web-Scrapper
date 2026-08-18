@@ -103,22 +103,25 @@ def _log_attempt(
     truncated: bool,
     page_title: Optional[str],
     model: Optional[str],
+    **extra,
 ) -> None:
     if logger is None:
         return
+    details = {
+        "mode": mode,
+        "content_type": content_type,
+        "confidence": confidence,
+        "num_sections": num_sections,
+        "truncated": truncated,
+        "title": page_title,
+        "model": model,
+    }
+    details.update(extra)
     logger.log_event(
         "extraction_attempt",
         url=url,
         outcome=outcome,
-        details={
-            "mode": mode,
-            "content_type": content_type,
-            "confidence": confidence,
-            "num_sections": num_sections,
-            "truncated": truncated,
-            "title": page_title,
-            "model": model,
-        },
+        details=details,
     )
 
 
@@ -201,7 +204,7 @@ def extract_content(
     to the prompt via prompts/repair.txt.
     """
     agent_cfg = agent_cfg if agent_cfg is not None else load_agent_config()
-    client = client if client is not None else LiteLLMClient(agent_cfg)
+    client = client if client is not None else LiteLLMClient(agent_cfg, logger=logger)
     scrape_timestamp = scrape_timestamp or datetime.now(timezone.utc)
     llm_cfg = agent_cfg["llm"]
     parse_retry_budget = int(llm_cfg.get("parse_retry", 1))
@@ -299,6 +302,12 @@ def extract_content(
         if raw is None:
             error = error or "model returned no parseable structured output"
             parse_retry_used += 1
+            _log_attempt(
+                logger, source_url, outcome="retrying", mode=mode,
+                content_type=content_type.value, confidence=0.0, num_sections=0,
+                truncated=False, page_title=page_title, model=model_name,
+                attempt=attempt + 1, error=error,
+            )
             continue
         try:
             result = ExtractionResult.model_validate(raw)
@@ -306,6 +315,12 @@ def extract_content(
             error = f"schema validation failed: {exc}"
             raw = None
             parse_retry_used += 1
+            _log_attempt(
+                logger, source_url, outcome="retrying", mode=mode,
+                content_type=content_type.value, confidence=0.0, num_sections=0,
+                truncated=False, page_title=page_title, model=model_name,
+                attempt=attempt + 1, error=error,
+            )
             continue
         # Provenance (Rule 4) belongs to the pipeline, not the model: the fetch
         # layer already determined these, and content_type reflects how this

@@ -133,7 +133,7 @@ def _run_ingest(argv: list[str]) -> None:
         embedder = load_embedder(cfg, logger=logger)
         store = VectorStore(cfg["store"]["chroma_path"], collection_prefix=cfg["store"]["collection_prefix"])
         agent_cfg = load_agent_config()
-        client = LiteLLMClient(agent_cfg)
+        client = LiteLLMClient(agent_cfg, logger=logger)
         obstacle_cfg = load_obstacle_config()
         fetch_cfg = load_fetch_config()
         outcome = ingest_url(

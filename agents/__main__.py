@@ -83,7 +83,7 @@ def main(argv: Optional[list[str]] = None) -> None:
             log_url = args.url
 
         agent_cfg = load_agent_config()
-        client = LiteLLMClient(agent_cfg)
+        client = LiteLLMClient(agent_cfg, logger=logger)
         result = extract_content(
             content,
             content_type=ctype,

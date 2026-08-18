@@ -132,7 +132,7 @@ def _visible_len(page) -> int:
         return 0
 
 
-def _terminal_block_present(page, obstacle_cfg: dict) -> Optional[tuple[str, str]]:
+def _terminal_block_present(page, obstacle_cfg: dict, logger: Optional[FetchLogger] = None, url: str = "") -> Optional[tuple[str, str]]:
     """Detect terminal access-control obstacles. Returns (obstacle, reason) or None."""
     if is_enabled(obstacle_cfg, "captcha_gate"):
         for frame in page.frames:
@@ -143,18 +143,21 @@ def _terminal_block_present(page, obstacle_cfg: dict) -> Optional[tuple[str, str
                 return ("captcha_gate", f"challenge widget frame detected: {frame.url}")
         try:
             text = page.locator("body").inner_text(timeout=4000).lower()
-        except PlaywrightError:
+        except PlaywrightError as exc:
             text = ""
+            if logger is not None:
+                _log_obstacle(logger, obstacle_cfg, url, "detection_failure",
+                              f"could not read body for CAPTCHA check: {exc}")
         if any(k in text for k in _CHALLENGE_TEXT_KEYWORDS):
             return ("captcha_gate", "challenge text detected on page")
     if is_enabled(obstacle_cfg, "session_expiry") or is_enabled(obstacle_cfg, "random_logout"):
-        auth_block = _detect_auth_block(page, obstacle_cfg)
+        auth_block = _detect_auth_block(page, obstacle_cfg, logger=logger, url=url)
         if auth_block:
             return auth_block
     return None
 
 
-def _detect_auth_block(page, obstacle_cfg: dict) -> Optional[tuple[str, str]]:
+def _detect_auth_block(page, obstacle_cfg: dict, *, logger: Optional[FetchLogger] = None, url: str = "") -> Optional[tuple[str, str]]:
     obstacle = "random_logout" if is_enabled(obstacle_cfg, "random_logout") else "session_expiry"
     current = page.url or ""
     if _AUTH_URL_RE.search(current):
@@ -162,23 +165,32 @@ def _detect_auth_block(page, obstacle_cfg: dict) -> Optional[tuple[str, str]]:
     try:
         if page.locator("input[type=password]").count() > 0:
             return (obstacle, "password field present (auth-gated content)")
-    except PlaywrightError:
-        pass
+    except PlaywrightError as exc:
+        if logger is not None:
+            _log_obstacle(logger, obstacle_cfg, url, "detection_failure",
+                          f"could not check for password field: {exc}")
     try:
         text = page.locator("body").inner_text(timeout=3000).lower()
-    except PlaywrightError:
+    except PlaywrightError as exc:
         text = ""
+        if logger is not None:
+            _log_obstacle(logger, obstacle_cfg, url, "detection_failure",
+                          f"could not read body for auth check: {exc}")
     if any(k in text for k in _AUTH_TEXT_KEYWORDS):
         return (obstacle, "auth challenge text detected")
     return None
 
 
-def _find_consent_banner(page):
+def _find_consent_banner(page, logger: Optional[FetchLogger] = None, url: str = ""):
     for sel in ("[role=dialog]", "dialog", "[aria-modal=true]"):
         try:
             loc = page.locator(sel)
             n = min(loc.count(), 5)
-        except PlaywrightError:
+        except PlaywrightError as exc:
+            if logger is not None:
+                logger.log_event("obstacle_detected", url=url, outcome="detection_failure",
+                                 reason=f"consent banner enumeration failed ({sel}): {exc}",
+                                 details={"obstacle": "detection_failure", "stage": "consent_banner"})
             continue
         for i in range(n):
             el = loc.nth(i)
@@ -193,12 +205,16 @@ def _find_consent_banner(page):
     return None
 
 
-def _find_popup(page):
+def _find_popup(page, logger: Optional[FetchLogger] = None, url: str = ""):
     for sel in ("[aria-modal=true]", "[role=dialog]", "dialog"):
         try:
             loc = page.locator(sel)
             n = min(loc.count(), 5)
-        except PlaywrightError:
+        except PlaywrightError as exc:
+            if logger is not None:
+                logger.log_event("obstacle_detected", url=url, outcome="detection_failure",
+                                 reason=f"popup enumeration failed ({sel}): {exc}",
+                                 details={"obstacle": "detection_failure", "stage": "popup_modal"})
             continue
         for i in range(n):
             el = loc.nth(i)
@@ -210,11 +226,15 @@ def _find_popup(page):
     return None
 
 
-def _choose_dismiss_button(banner, kind: str):
+def _choose_dismiss_button(banner, kind: str, logger: Optional[FetchLogger] = None, url: str = ""):
     try:
         buttons = banner.locator("button")
         n = min(buttons.count(), 12)
-    except PlaywrightError:
+    except PlaywrightError as exc:
+        if logger is not None:
+            logger.log_event("obstacle_detected", url=url, outcome="detection_failure",
+                             reason=f"button enumeration failed on {kind}: {exc}",
+                             details={"obstacle": "detection_failure", "stage": kind})
         return None
     for i in range(n):
         el = buttons.nth(i)
@@ -269,7 +289,7 @@ def _safe_click(page, locator, obstacle_cfg: dict, fetch_cfg: dict, logger: Fetc
 
         page.wait_for_timeout(700)
 
-        terminal = _terminal_block_present(page, obstacle_cfg)
+        terminal = _terminal_block_present(page, obstacle_cfg, logger=logger, url=url)
         if terminal:
             name, reason = terminal
             _log_obstacle(logger, obstacle_cfg, url, name, reason)
@@ -279,10 +299,21 @@ def _safe_click(page, locator, obstacle_cfg: dict, fetch_cfg: dict, logger: Fetc
         if gone_locator is not None:
             try:
                 gone = not gone_locator.is_visible() or gone_locator.count() == 0
-            except PlaywrightError:
+            except PlaywrightError as exc:
                 gone = True
+                _log_obstacle(
+                    logger, obstacle_cfg, url, "detection_failure",
+                    f"could not check element visibility, assuming gone: {exc}",
+                    {"stage": "gone_locator"},
+                )
             changed = changed or gone
         if changed:
+            if attempt > 0:
+                _log_obstacle(
+                    logger, obstacle_cfg, url, "blocked_clicks",
+                    f"recovered on attempt {attempt + 1}",
+                    {"attempt": attempt + 1, "outcome": "recovered"},
+                )
             return
 
         _log_obstacle(
@@ -301,14 +332,14 @@ def _safe_click(page, locator, obstacle_cfg: dict, fetch_cfg: dict, logger: Fetc
 
 
 def _dismiss_banner(page, banner, obstacle_cfg: dict, fetch_cfg: dict, logger: FetchLogger, url: str, kind: str) -> None:
-    target = _choose_dismiss_button(banner, kind)
+    target = _choose_dismiss_button(banner, kind, logger=logger, url=url)
     if target is None:
         raise _ClickNoOp(f"{kind}: no dismiss/accept button found on banner")
     _safe_click(page, target, obstacle_cfg, fetch_cfg, logger, url, kind, change_threshold=50, gone_locator=banner)
 
 
 def _dismiss_cookie_banner(page, obstacle_cfg: dict, fetch_cfg: dict, logger: FetchLogger, url: str) -> None:
-    banner = _find_consent_banner(page)
+    banner = _find_consent_banner(page, logger=logger, url=url)
     if banner is None:
         return
     _log_obstacle(logger, obstacle_cfg, url, "cookie_banner", "cookie banner detected, dismissing")
@@ -316,18 +347,22 @@ def _dismiss_cookie_banner(page, obstacle_cfg: dict, fetch_cfg: dict, logger: Fe
 
 
 def _dismiss_popup(page, obstacle_cfg: dict, fetch_cfg: dict, logger: FetchLogger, url: str) -> None:
-    popup = _find_popup(page)
+    popup = _find_popup(page, logger=logger, url=url)
     if popup is None:
         return
     _log_obstacle(logger, obstacle_cfg, url, "popup_modal", "popup/modal overlay detected, dismissing")
     _dismiss_banner(page, popup, obstacle_cfg, fetch_cfg, logger, url, "popup_modal")
 
 
-def _find_load_more(page):
+def _find_load_more(page, logger: Optional[FetchLogger] = None, url: str = ""):
     try:
         buttons = page.locator("button")
         n = min(buttons.count(), 20)
-    except PlaywrightError:
+    except PlaywrightError as exc:
+        if logger is not None:
+            logger.log_event("obstacle_detected", url=url, outcome="detection_failure",
+                             reason=f"load-more button enumeration failed: {exc}",
+                             details={"obstacle": "detection_failure", "stage": "load_more"})
         return None
     for i in range(n):
         el = buttons.nth(i)
@@ -343,13 +378,18 @@ def _find_load_more(page):
 def _paginate(page, obstacle_cfg: dict, fetch_cfg: dict, logger: FetchLogger, url: str) -> None:
     max_clicks = int(fetch_cfg.get("pagination_max_clicks", 5))
     for i in range(max_clicks):
-        btn = _find_load_more(page)
+        btn = _find_load_more(page, logger=logger, url=url)
         if btn is None:
             return
         before = _visible_len(page)
         _safe_click(page, btn, obstacle_cfg, fetch_cfg, logger, url, "load_more", change_threshold=10)
         after = _visible_len(page)
         if after <= before + 10:
+            _log_obstacle(
+                logger, obstacle_cfg, url, "load_more",
+                f"no new content gained after click {i + 1} (before={before}, after={after}), stopping pagination",
+                {"click": i + 1, "before": before, "after": after},
+            )
             return
         _log_obstacle(
             logger,
@@ -378,6 +418,8 @@ def _goto_with_retries(page, url: str, obstacle_cfg: dict, fetch_cfg: dict, logg
                 continue
             raise _FetchFailed("slow_responses: navigation timed out after extended timeout")
         except PlaywrightError as exc:
+            _log_obstacle(logger, obstacle_cfg, url, "navigation_error",
+                          f"navigation error: {exc}", {"error": str(exc)})
             raise _FetchFailed(f"navigation error: {exc}")
         if response is None:
             raise _FetchFailed("navigation returned no response")
@@ -415,11 +457,18 @@ def _log_redirect_hops(request, logger: FetchLogger, url: str) -> None:
         )
 
 
-def _settle(page, fetch_cfg: dict) -> None:
+def _settle(page, fetch_cfg: dict, logger=None, url: str = "") -> None:
     try:
         page.wait_for_load_state("networkidle", timeout=5000)
-    except PlaywrightError:
-        pass
+    except PlaywrightError as exc:
+        if logger is not None:
+            logger.log_event(
+                "obstacle_detected",
+                url=url,
+                outcome="follow_and_log",
+                reason=f"networkidle timeout: {exc}",
+                details={"obstacle": "slow_responses", "policy": "wait", "detection_method": "networkidle_timeout"},
+            )
     page.wait_for_timeout(int(float(fetch_cfg["browser_settle_seconds"]) * 1000))
 
 
@@ -441,13 +490,21 @@ def fetch_browser(
     pw = sync_playwright().start()
     browser_instance = browser
     try:
-        if browser_instance is None:
-            browser_instance = pw.chromium.launch(headless=True)
-        context = browser_instance.new_context(user_agent=str(fetch_cfg["user_agent"]))
-        page = context.new_page()
+        try:
+            if browser_instance is None:
+                browser_instance = pw.chromium.launch(headless=True)
+            context = browser_instance.new_context(user_agent=str(fetch_cfg["user_agent"]))
+            page = context.new_page()
+        except PlaywrightError as exc:
+            logger.log_event("obstacle_detected", url=url, outcome="blocked",
+                             reason=f"browser launch/context failed: {exc}",
+                             details={"obstacle": "browser_error", "error": str(exc)})
+            result = _result(url, FetchOutcome.BLOCKED, f"browser launch/context failed: {exc}", fetcher="browser")
+            logger.log_fetch_attempt(result)
+            return result
         try:
             page.on("request", lambda r: _log_redirect_hops(r, logger, url))
-            rate_limiter.wait(url)
+            rate_limiter.wait(url, logger=logger)
             timeout_ms = int(float(fetch_cfg["timeout_seconds"]) * 1000)
             try:
                 response = _goto_with_retries(page, url, obstacle_cfg, fetch_cfg, logger, timeout_ms)
@@ -456,10 +513,10 @@ def fetch_browser(
                 logger.log_fetch_attempt(result)
                 return result
 
-            _settle(page, fetch_cfg)
+            _settle(page, fetch_cfg, logger=logger, url=url)
 
             try:
-                terminal = _terminal_block_present(page, obstacle_cfg)
+                terminal = _terminal_block_present(page, obstacle_cfg, logger=logger, url=url)
                 if terminal:
                     name, reason = terminal
                     _log_obstacle(logger, obstacle_cfg, url, name, reason)
@@ -472,7 +529,7 @@ def fetch_browser(
                 if is_enabled(obstacle_cfg, "popup_modal"):
                     _dismiss_popup(page, obstacle_cfg, fetch_cfg, logger, url)
 
-                terminal = _terminal_block_present(page, obstacle_cfg)
+                terminal = _terminal_block_present(page, obstacle_cfg, logger=logger, url=url)
                 if terminal:
                     name, reason = terminal
                     _log_obstacle(logger, obstacle_cfg, url, name, reason)
@@ -491,7 +548,14 @@ def fetch_browser(
                 logger.log_fetch_attempt(result)
                 return result
 
-            html = page.content()
+            try:
+                html = page.content()
+            except PlaywrightError as exc:
+                _log_obstacle(logger, obstacle_cfg, url, "page_content_failed",
+                              f"could not extract rendered HTML: {exc}", {"error": str(exc)})
+                result = _result(url, FetchOutcome.FAILED, f"page.content() failed: {exc}", fetcher="browser")
+                logger.log_fetch_attempt(result)
+                return result
             status = response.status if response is not None else None
             content_type = (response.headers or {}).get("content-type") or "text/html"
             final_url = page.url

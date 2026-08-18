@@ -60,7 +60,7 @@ def _backoff_seconds(attempt: int, base: float, retry_after: Optional[str]) -> f
     return min(30.0, base * (2 ** attempt)) + random.uniform(0, 0.5)
 
 
-def _decode_body(body: bytes, charset: Optional[str]) -> Optional[str]:
+def _decode_body(body: bytes, charset: Optional[str], *, logger=None, url: str = "") -> Optional[str]:
     if charset:
         try:
             return body.decode(charset)
@@ -69,6 +69,14 @@ def _decode_body(body: bytes, charset: Optional[str]) -> Optional[str]:
     try:
         return body.decode("utf-8")
     except UnicodeDecodeError:
+        if logger is not None:
+            logger.log_event(
+                "obstacle_detected",
+                url=url,
+                outcome="encoding_fallback",
+                reason=f"encoding fallback: declared charset '{charset}' and UTF-8 both failed, using latin-1 with replacement chars",
+                details={"obstacle": "encoding_fallback", "charset": charset, "fallback": "latin-1"},
+            )
         return body.decode("latin-1", errors="replace")
 
 
@@ -92,7 +100,7 @@ def fetch_static(
 
     attempt = 0
     while True:
-        rate_limiter.wait(url)
+        rate_limiter.wait(url, logger=logger)
         req = urllib.request.Request(
             url,
             headers={
@@ -188,7 +196,7 @@ def fetch_static(
 
     if is_html_like(content_type):
         charset = resp.headers.get_content_charset()
-        html = _decode_body(body, charset)
+        html = _decode_body(body, charset, logger=logger, url=url)
         raw = None
     else:
         html = None

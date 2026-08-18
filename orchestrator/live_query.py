@@ -105,16 +105,42 @@ def live_query(
 ) -> LiveQueryResult:
     """Answer for one URL: corpus first, single-shot scrape on miss. No write-back."""
     collection = _collection(embedder, pipeline_cfg)
-    present = store.count(collection_name=collection, where={"source_url": url})
+    try:
+        present = store.count(collection_name=collection, where={"source_url": url})
+    except Exception as exc:
+        logger.log_event(
+            "live_query",
+            url=url,
+            outcome="corpus_error",
+            reason=f"corpus count failed: {exc}",
+            details={"error": str(exc), "stage": "count"},
+        )
+        return LiveQueryResult(
+            url=url, found_in_corpus=False, source_used="error",
+            status="error", provenance={"source_url": url}, reason=str(exc),
+        )
 
     if present > 0:
-        if query:
-            query_embedding = embedder.embed([query])[0]
-            rows = store.query(
-                query_embedding, k=k, collection_name=collection, where={"source_url": url}
+        try:
+            if query:
+                query_embedding = embedder.embed([query])[0]
+                rows = store.query(
+                    query_embedding, k=k, collection_name=collection, where={"source_url": url}
+                )
+            else:
+                rows = store.get(collection_name=collection, where={"source_url": url})
+        except Exception as exc:
+            logger.log_event(
+                "live_query",
+                url=url,
+                outcome="corpus_error",
+                reason=f"corpus retrieval failed: {exc}",
+                details={"error": str(exc), "stage": "retrieve"},
             )
-        else:
-            rows = store.get(collection_name=collection, where={"source_url": url})
+            return LiveQueryResult(
+                url=url, found_in_corpus=False, source_used="error",
+                status="error", provenance={"source_url": url}, reason=str(exc),
+            )
         evidence = [Evidence(text=r["document"], provenance=_row_provenance(r["metadata"])) for r in rows]
         provenance = _corpus_provenance(url, rows[0]["metadata"]) if rows else {"source_url": url}
         logger.log_event(

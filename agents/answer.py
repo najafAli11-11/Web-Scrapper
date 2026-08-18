@@ -30,7 +30,7 @@ PROMPT_PATH = Path(__file__).resolve().parents[1] / "agents" / "prompts" / "answ
 TOOL_NAME = "answer_question"
 
 
-def _unwrap_answer(answer: Answer) -> Answer:
+def _unwrap_answer(answer: Answer, *, logger=None, url: str = "") -> Answer:
     """Unwrap JSON-inside-JSON: when the model returns {\"answer\": ..., \"citations\": ...}
     as the answer string instead of as the top-level structure."""
     text = answer.answer.strip()
@@ -43,7 +43,16 @@ def _unwrap_answer(answer: Answer) -> Answer:
             citations = answer.citations
             if not citations and "citations" in inner:
                 citations = inner["citations"]
-            return Answer(answer=inner["answer"], citations=citations)
+            unwrapped = Answer(answer=inner["answer"], citations=citations)
+            if logger is not None:
+                logger.log_event(
+                    "answer_unwrap_rescue",
+                    url=url,
+                    outcome="unwrapped",
+                    reason="JSON-inside-JSON detected and unwrapped",
+                    details={"original_length": len(text), "answer_length": len(unwrapped.answer)},
+                )
+            return unwrapped
     except (json.JSONDecodeError, ValueError, TypeError):
         pass
     return answer
@@ -112,6 +121,7 @@ def generate_answer(
     client: LLMClient,
     agent_cfg: dict,
     logger: Optional[FetchLogger] = None,
+    url: Optional[str] = None,
 ) -> Optional[Answer]:
     """Synthesize a grounded Answer from RAG evidence.
 
@@ -149,7 +159,7 @@ def generate_answer(
 
     if raw is not None:
         try:
-            return _unwrap_answer(Answer.model_validate(raw))
+            return _unwrap_answer(Answer.model_validate(raw), logger=logger, url=url)
         except ValidationError as exc:
             error = f"schema validation failed: {exc}"
     else:
@@ -158,11 +168,20 @@ def generate_answer(
     if isinstance(client, LiteLLMClient) and client.last_raw_text:
         fb = _fallback_from_markdown(client.last_raw_text, evidence)
         if fb is not None:
+            if logger is not None:
+                logger.log_event(
+                    "answer_fallback_rescued",
+                    url=url,
+                    outcome="fallback_rescue",
+                    reason=f"structural path failed ({error}), rescued from markdown",
+                    details={"evidence_count": len(evidence), "question": question[:200]},
+                )
             return fb
 
     if logger is not None:
         logger.log_event(
             "answer_generation_failed",
+            url=url,
             outcome="failed",
             reason=error,
             details={

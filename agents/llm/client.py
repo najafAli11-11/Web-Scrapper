@@ -54,9 +54,10 @@ class LLMClient(Protocol):
 
 
 class LiteLLMClient:
-    def __init__(self, agent_cfg: dict):
+    def __init__(self, agent_cfg: dict, logger=None):
         self.cfg = agent_cfg["llm"]
         self.last_raw_text: Optional[str] = None
+        self._logger = logger
 
     def _model(self) -> str:
         provider = self.cfg["provider"]
@@ -68,6 +69,13 @@ class LiteLLMClient:
     def _api_key(self) -> Optional[str]:
         env = self.cfg.get("api_key_env")
         return get_env(env) if env else None
+
+    def _log(self, event_type: str, **kwargs) -> None:
+        if self._logger is not None:
+            self._logger.log_event(event_type, **kwargs)
+
+    def set_logger(self, logger) -> None:
+        self._logger = logger
 
     def _request_kwargs(self) -> dict:
         kwargs: dict = {
@@ -113,7 +121,13 @@ class LiteLLMClient:
                 tools=self._tool(tool_name, tool_schema),
                 tool_choice=self.cfg.get("tool_choice", "required"),
             )
-        except Exception:
+        except Exception as exc:
+            self._log(
+                "llm_call",
+                outcome="tool_use_failed",
+                reason=f"tool-use call failed, falling back to json_mode: {exc}",
+                details={"model": self._model(), "fallback": "json_mode", "error": str(exc)[:300]},
+            )
             return self._json_mode(messages, tool_schema, temperature, max_tokens)
 
         try:
@@ -121,13 +135,29 @@ class LiteLLMClient:
             self.last_raw_text = message.content
             for call in message.tool_calls or []:
                 if call.function and call.function.arguments:
-                    return json.loads(call.function.arguments)
+                    parsed = json.loads(call.function.arguments)
+                    self._log("llm_call", outcome="success", reason="tool_use",
+                              details={"model": self._model(), "mode": "tool_use"})
+                    return parsed
             if message.content:
                 parsed = _extract_json_from_text(message.content)
                 if parsed is not None:
+                    self._log("llm_call", outcome="success", reason="json_from_content",
+                              details={"model": self._model(), "mode": "json_from_content"})
                     return parsed
-        except Exception:
-            pass
+            self._log(
+                "llm_call",
+                outcome="tool_use_parse_failed",
+                reason="tool_calls empty and content not parseable, falling back to json_mode",
+                details={"model": self._model(), "has_tool_calls": bool(message.tool_calls)},
+            )
+        except Exception as exc:
+            self._log(
+                "llm_call",
+                outcome="tool_use_parse_failed",
+                reason=f"failed to parse tool-use response: {exc}",
+                details={"model": self._model(), "error": str(exc)[:300]},
+            )
         return self._json_mode(messages, tool_schema, temperature, max_tokens)
 
     def _json_mode(self, messages, tool_schema, temperature, max_tokens) -> Optional[dict]:
@@ -151,6 +181,16 @@ class LiteLLMClient:
             )
             text = response.choices[0].message.content
             self.last_raw_text = text
-            return json.loads(text) if text else None
-        except Exception:
+            parsed = json.loads(text) if text else None
+            if parsed is not None:
+                self._log("llm_call", outcome="success", reason="json_mode",
+                          details={"model": self._model(), "mode": "json_mode"})
+            return parsed
+        except Exception as exc:
+            self._log(
+                "llm_call",
+                outcome="json_mode_failed",
+                reason=f"json_mode fallback failed: {exc}",
+                details={"model": self._model(), "error": str(exc)[:300]},
+            )
             return None
