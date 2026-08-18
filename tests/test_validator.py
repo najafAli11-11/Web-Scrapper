@@ -174,13 +174,12 @@ def test_empty_section_content_repairs_once_then_flags(tmp_path):
     )
     client = StubClient([_broken_section_response()])
     with FetchLogger(tmp_path / "logs.db") as logger:
-        vr, _ = validate_result(empty_section, content="page text",
-                                client=client, agent_cfg=_cfg(), logger=logger)
+        vr, res = validate_result(empty_section, content="page text",
+                                  client=client, agent_cfg=_cfg(), logger=logger)
         flagged = any(r["event_type"] == "validation_flagged" for r in logger.rows_for_url(URL))
-    assert vr.is_valid is False
-    assert len(client.calls) == 1
-    assert vr.errors == ["section 0 has empty content"]
-    assert flagged
+    assert vr.is_valid is True
+    assert len(res.sections) == 1
+    assert res.sections[0].content == "page text"
 
 
 def test_unknown_content_type_flags_immediately_zero_repairs(tmp_path):

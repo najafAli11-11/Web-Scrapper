@@ -329,6 +329,18 @@ def extract_content(
         result.scrape_timestamp = scrape_timestamp
         result.content_type = content_type
 
+        # Strip sections with empty/whitespace-only content — news
+        # aggregators and list pages often produce these from UI elements.
+        # Rule 5: log them so they're never silently lost.
+        pre_filter = len(result.sections)
+        result.sections = [s for s in result.sections if s.content and s.content.strip()]
+        dropped = pre_filter - len(result.sections)
+        if dropped:
+            result.extraction_notes = (
+                (result.extraction_notes or "")
+                + f" | {dropped} empty sections filtered"
+            ).strip(" |")
+
         # Rule 5: never silently drop content. If the LLM returned 0 sections
         # but we have non-empty content, wrap it in a single fallback section
         # so downstream (chunking, RAG) always has something to work with.
