@@ -1,7 +1,7 @@
 {
   "llm": {
     "provider": "nvidia_nim",
-    "model": "meta/llama-3.1-8b-instruct",
+    "model": "meta/llama-4-maverick-17b-128e-instruct",
     "api_key_env": "NVIDIA_NIM_API_KEY",
     "api_base": null,
     "temperature": 0.1,
