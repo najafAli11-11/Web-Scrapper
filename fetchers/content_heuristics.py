@@ -32,8 +32,23 @@ def visible_text_length(raw_html: str) -> int:
 
 def looks_empty(raw_html: str, threshold_chars: int = 200) -> bool:
     """True when fetched HTML has too little visible text to be meaningful
-    (empty body, JS shell that renders nothing server-side)."""
-    return visible_text_length(raw_html) < threshold_chars
+    (empty body, JS shell that renders nothing server-side).
+
+    Checks two conditions:
+      1. Absolute: visible text < threshold_chars
+      2. Ratio: visible text < 1% of total HTML size (JS shell detection)
+    A large HTML page with very little visible text is almost certainly a
+    client-side rendered SPA that needs browser rendering.
+    """
+    if not raw_html:
+        return True
+    visible = visible_text_length(raw_html)
+    if visible < threshold_chars:
+        return True
+    total = len(raw_html)
+    if total > 5000 and visible / total < 0.01:
+        return True
+    return False
 
 
 def is_html_like(content_type: Optional[str]) -> bool:
