@@ -438,7 +438,7 @@ def _render_logs() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Scraper RAG UI", layout="wide")
+    st.set_page_config(page_title="Scraper RAG UI", layout="wide", page_icon="\U0001f50d")
     st.title("Web Scraper · RAG")
     _render_sidebar()
     tab_chat, tab_ingest, tab_logs = st.tabs(["Chat", "Ingestion", "Logs"])
