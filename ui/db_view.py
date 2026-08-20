@@ -262,3 +262,88 @@ def spawn_ingestion(
         urls_file.unlink(missing_ok=True)
         raise
     return runner
+
+
+# ---------------------------------------------------------------------------
+# Delete / clear helpers (called from the UI for URL removal and log clearing).
+# These open a short-lived write connection, execute, commit, and close.
+# ---------------------------------------------------------------------------
+
+
+def delete_url_from_queue(url: str, *, db_path: Union[str, Path]) -> int:
+    """Delete a URL row from the queue.db ``urls`` table.
+
+    Returns the number of rows deleted (0 or 1).  Safe to call even if the
+    URL doesn't exist or the DB is empty — no error is raised.
+    """
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return 0
+    conn = sqlite3.connect(str(db_path.resolve()))
+    try:
+        cur = conn.execute("DELETE FROM urls WHERE url = ?", (url,))
+        conn.commit()
+        return cur.rowcount
+    except sqlite3.OperationalError:
+        return 0
+    finally:
+        conn.close()
+
+
+def delete_url_logs(url: str, *, db_path: Union[str, Path]) -> int:
+    """Delete all events for a URL from the logs.db ``events`` table.
+
+    Returns the number of rows deleted.  Safe to call even if no events
+    exist for the URL or the DB is empty.
+    """
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return 0
+    conn = sqlite3.connect(str(db_path.resolve()))
+    try:
+        cur = conn.execute("DELETE FROM events WHERE url = ?", (url,))
+        conn.commit()
+        return cur.rowcount
+    except sqlite3.OperationalError:
+        return 0
+    finally:
+        conn.close()
+
+
+def delete_url_everywhere(
+    url: str,
+    *,
+    queue_db: Union[str, Path],
+    logs_db: Union[str, Path],
+    collection_name: str,
+    store: "VectorStore",
+) -> dict:
+    """Delete a URL from queue.db, logs.db, and the ChromaDB vector store.
+
+    Returns a summary dict: ``{"queue_deleted": int, "logs_deleted": int}``.
+    ChromaDB deletion is fire-and-forget (no count returned by the driver).
+    """
+    queue_deleted = delete_url_from_queue(url, db_path=queue_db)
+    logs_deleted = delete_url_logs(url, db_path=logs_db)
+    store.delete_url(url, collection_name=collection_name)
+    return {"queue_deleted": queue_deleted, "logs_deleted": logs_deleted}
+
+
+def clear_all_logs(*, db_path: Union[str, Path]) -> int:
+    """Delete ALL events from the logs.db ``events`` table.
+
+    Returns the number of rows deleted.  Safe to call on an empty or
+    missing table.
+    """
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return 0
+    conn = sqlite3.connect(str(db_path.resolve()))
+    try:
+        cur = conn.execute("DELETE FROM events")
+        conn.commit()
+        return cur.rowcount
+    except sqlite3.OperationalError:
+        return 0
+    finally:
+        conn.close()

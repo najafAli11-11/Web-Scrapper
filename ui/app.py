@@ -42,7 +42,15 @@ from orchestrator.live_query import live_query
 from pipeline.config_loader import load_pipeline_config
 from pipeline.embed import load_embedder
 from pipeline.store import VectorStore, corpus_collection, row_provenance
-from ui.db_view import BatchAlreadyRunning, BatchRunner, EventLogView, QueueView, spawn_ingestion
+from ui.db_view import (
+    BatchAlreadyRunning,
+    BatchRunner,
+    EventLogView,
+    QueueView,
+    clear_all_logs,
+    delete_url_everywhere,
+    spawn_ingestion,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 K = 5
@@ -371,12 +379,43 @@ def _render_ingestion() -> None:
         for state, n in sorted(counts.items()):
             st.markdown(f"- **{state}**: {n}")
         st.dataframe(queue.states(), use_container_width=True)
+
+        st.divider()
+        st.subheader("Delete URL")
+        st.caption("Remove a URL from the queue, vector store, and logs.")
+        all_urls = [row["url"] for row in queue.states()]
+        delete_url = st.selectbox("Select URL to delete", all_urls, key="delete_url_select")
+        confirm_delete = st.checkbox("I confirm", key="delete_confirm")
+        if st.button("Delete URL", disabled=not confirm_delete, type="primary"):
+            if delete_url:
+                with st.spinner(f"Deleting {delete_url}..."):
+                    result = delete_url_everywhere(
+                        delete_url,
+                        queue_db=QUEUE_DB,
+                        logs_db=LOGS_DB,
+                        collection_name=corpus_collection(_embedder(), _pipeline_config()),
+                        store=_store(),
+                    )
+                st.success(
+                    f"Deleted: {result['queue_deleted']} queue row(s), "
+                    f"{result['logs_deleted']} log event(s), and all vector store chunks."
+                )
+                st.rerun()
     else:
         st.info("Queue is empty — submit URLs above to start ingestion.")
 
 
 def _render_logs() -> None:
     st.header("Logs")
+
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        confirm_clear = st.checkbox("I confirm", key="clear_logs_confirm")
+        if st.button("Clear All Logs", disabled=not confirm_clear, type="primary"):
+            deleted = clear_all_logs(db_path=LOGS_DB)
+            st.success(f"Cleared {deleted} log event(s).")
+            st.rerun()
+
     view = EventLogView(LOGS_DB)
     selected = st.multiselect("Event types", view.event_types(), key="log_types")
     url_filter = st.text_input("Filter by URL fragment", key="log_url_filter")
